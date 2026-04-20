@@ -1,0 +1,10 @@
+# Full demo stack for rampart.
+# Services come online as each module is scaffolded:
+#   engine           (Adım 2-3) — Go core, HTTP + SSE API
+#   rampart-native   (Adım 6)   — Rust lockfile parser, UDS shared volume
+#   postgres         (Adım 7)   — persistent storage backend
+#   mock-npm-registry (Adım 7)  — pre-seeded with malicious package fixtures
+#   backstage        (Adım 7)   — examples/app with plugins loaded
+#   slack-notifier   (Adım 7)   — webhook listener subscribed to /v1/stream
+
+services: {}

@@ -1,0 +1,20 @@
+{
+  "name": "rampart",
+  "private": true,
+  "version": "0.1.0",
+  "description": "A rampart for your supply chain.",
+  "license": "MIT",
+  "author": "Uğurcan Aytar <aytarugurcan@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ugurcan-aytar/rampart.git"
+  },
+  "packageManager": "yarn@4.6.0",
+  "engines": {
+    "node": ">=20.18.0"
+  },
+  "workspaces": [
+    "backstage/plugins/*",
+    "backstage/examples/app"
+  ]
+}

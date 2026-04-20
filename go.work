@@ -1,0 +1,7 @@
+go 1.23
+
+// Modules are added as each component is scaffolded:
+//   use ./engine                          (Adım 2)
+//   use ./cli                             (Adım 4)
+//   use ./integrations/precommit-hook
+//   use ./integrations/slack-notifier

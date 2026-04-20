@@ -1,0 +1,77 @@
+# ---------------------------------------------------------------------------
+# AI artifacts — local only, never committed.
+# (This block stays at the top so the intent is unambiguous.)
+# ---------------------------------------------------------------------------
+FIRST.md
+CLAUDE.md
+.claude/
+.claudeignore
+.aider*
+.cursor/
+.cursorignore
+.continue/
+
+# ---------------------------------------------------------------------------
+# Node / Yarn 4
+# ---------------------------------------------------------------------------
+node_modules/
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/build-state.yml
+.yarn/unplugged/
+.pnp.*
+.pnp.loader.mjs
+dist/
+build/
+*.tsbuildinfo
+coverage/
+.nyc_output/
+
+# ---------------------------------------------------------------------------
+# Go
+# ---------------------------------------------------------------------------
+*.test
+*.out
+/engine/engine
+/cli/rampart
+/integrations/precommit-hook/rampart-precommit
+/integrations/slack-notifier/slack-notifier
+vendor/
+
+# ---------------------------------------------------------------------------
+# Rust
+# ---------------------------------------------------------------------------
+/native/target/
+**/*.rs.bk
+
+# ---------------------------------------------------------------------------
+# Environment / secrets
+# ---------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# ---------------------------------------------------------------------------
+# Editor / OS
+# ---------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Generated artifacts
+# ---------------------------------------------------------------------------
+/schemas/.redocly-cache/
+/engine/coverage.out
+/engine/coverage.html
+/e2e/test-results/
+/e2e/playwright-report/
+/e2e/blob-report/

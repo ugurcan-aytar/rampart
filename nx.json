@@ -1,0 +1,23 @@
+{
+  "affected": {
+    "defaultBase": "main"
+  },
+  "targetDefaults": {
+    "build": { "cache": true, "dependsOn": ["^build"] },
+    "test": { "cache": true, "dependsOn": ["^build"] },
+    "lint": { "cache": true },
+    "typecheck": { "cache": true }
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/*.test.ts",
+      "!{projectRoot}/**/*.spec.ts",
+      "!{projectRoot}/**/*.test.tsx",
+      "!{projectRoot}/**/*.spec.tsx",
+      "!{projectRoot}/**/__tests__/**/*"
+    ],
+    "sharedGlobals": []
+  }
+}
