@@ -17,11 +17,15 @@
   "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'lint: not yet configured (Adım 7 — full Backstage toolchain install)'",
-    "test": "echo 'test: no tests yet (Adım 7 — Jest setup)'"
+    "lint": "backstage-cli package lint",
+    "test": "backstage-cli package test --watch=false --passWithNoTests"
   },
   "devDependencies": {
+    "@backstage/cli": "^0.29.0",
     "@types/node": "22.5.0",
     "typescript": "5.6.3"
+  },
+  "dependencies": {
+    "@backstage/plugin-scaffolder-node": "^0.5.0"
   }
 }

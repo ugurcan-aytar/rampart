@@ -1,0 +1,21 @@
+# Minimal app-config for `yarn dev` — backstage-cli package start picks
+# this up by default when run from the plugin's workspace directory.
+#
+# Why this file exists: createDevApp()'s SignInPage reads
+# configApi.getString('app.title') while rendering its header. Without a
+# configured app.title the mock-config ConfigReader throws, and the
+# dev-utils shell renders a React error boundary instead of the plugin.
+# Not a hack — upstream Backstage monorepo plugins ship the same file
+# under plugins/<id>/app-config.yaml for the same reason.
+
+app:
+  title: rampart plugin — dev harness
+  baseUrl: http://localhost:3000
+
+backend:
+  baseUrl: http://localhost:7007
+
+# Consumed by the RampartClient via configApi.getString('rampart.baseUrl')
+# in plugin.ts; keep this in sync with examples/app/app-config.yaml.
+rampart:
+  baseUrl: http://localhost:8080

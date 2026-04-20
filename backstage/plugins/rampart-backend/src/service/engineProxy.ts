@@ -1,16 +1,10 @@
 import express from 'express';
+import type { Request, Response, Express } from 'express';
+import type { IncomingHttpHeaders } from 'http';
 
 type Logger = {
   info(msg: string): void;
   error(msg: string, err?: unknown): void;
-};
-
-type Req = { method: string; path: string; headers: Record<string, unknown>; body: unknown };
-type Res = {
-  status(code: number): Res;
-  setHeader(name: string, value: string): void;
-  json(body: unknown): void;
-  send(body: string): void;
 };
 
 /**
@@ -19,15 +13,18 @@ type Res = {
  * forwarder — it relays method / path / body to the engine and streams
  * the response back. Adım 7 adds auth forwarding, connection pooling,
  * and SSE passthrough for /v1/stream.
+ *
+ * Explicit Express return type keeps TS2742 ("inferred type cannot be
+ * named portably") away when another module imports this function.
  */
-export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger }) {
+export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger }): Express {
   const router = express();
 
-  router.get('/_health', (_req: Req, res: Res) => {
+  router.get('/_health', (_req: Request, res: Response) => {
     res.json({ status: 'ok' });
   });
 
-  router.all('/v1/*', async (req: Req, res: Res) => {
+  router.all('/v1/*', async (req: Request, res: Response) => {
     const target = opts.baseUrl + req.path;
     try {
       const upstream = await fetch(target, {
@@ -51,11 +48,18 @@ export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger 
   return router;
 }
 
-function pickForwardHeaders(headers: Record<string, unknown>): Record<string, string> {
-  const out: Record<string, string> = {};
+function pickForwardHeaders(headers: IncomingHttpHeaders): Headers {
+  // Using Headers (instead of a plain object) sidesteps eslint's
+  // dot-notation rule complaining about literal header names like
+  // 'Content-Type' and 'Authorization' while keeping the semantics
+  // fetch() expects. Typing `headers` as IncomingHttpHeaders (named
+  // fields, not an index signature) lets us dot-access authorization
+  // and bracket-access 'content-type' — both satisfy TS4111 +
+  // dot-notation simultaneously.
+  const out = new Headers();
   const ct = headers['content-type'];
-  if (typeof ct === 'string') out['Content-Type'] = ct;
-  const auth = headers['authorization'];
-  if (typeof auth === 'string') out['Authorization'] = auth;
+  if (typeof ct === 'string') out.set('Content-Type', ct);
+  const auth = headers.authorization;
+  if (typeof auth === 'string') out.set('Authorization', auth);
   return out;
 }

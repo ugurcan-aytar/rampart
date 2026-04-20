@@ -6,10 +6,6 @@ const ANN_SBOM_SOURCE = 'rampart.io/sbom-source';
 const ANN_LAST_SCAN = 'rampart.io/last-scan';
 const ANN_CRITICALITY = 'rampart.io/criticality';
 
-type EntityWithAnnotations = {
-  metadata?: { annotations?: Record<string, string> };
-};
-
 /**
  * ComponentCard goes into a Backstage Component entity page to show
  * rampart-specific metadata: SBOM source, last scan time, criticality.
@@ -17,7 +13,11 @@ type EntityWithAnnotations = {
  * renders even if the engine is down.
  */
 export const ComponentCard = () => {
-  const { entity } = useEntity<EntityWithAnnotations>();
+  // Use the default Entity type from useEntity (real Backstage Entity
+  // has required apiVersion / kind, so a bare subset type violates the
+  // generic bound. Accessing annotations through entity.metadata works
+  // uniformly for any Entity kind.)
+  const { entity } = useEntity();
   const annotations = entity.metadata?.annotations ?? {};
   const sbomSource = annotations[ANN_SBOM_SOURCE];
   const lastScan = annotations[ANN_LAST_SCAN];
