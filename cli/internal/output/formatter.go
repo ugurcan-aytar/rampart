@@ -12,16 +12,20 @@ import (
 	"time"
 )
 
-// SBOM is the CLI's public view of a parsed lockfile.
+// SBOM is the CLI's public view of a parsed lockfile. In "parse-only"
+// mode (no --component-ref / --commit-sha) the identity fields are
+// zero-valued and `omitempty` keeps them out of the JSON output — that
+// is what ADR-0005's "parser is pure" split looks like at the CLI
+// surface.
 type SBOM struct {
-	ID           string
-	ComponentRef string
-	CommitSHA    string
-	Ecosystem    string
-	GeneratedAt  time.Time
-	SourceFormat string
-	SourceBytes  int64
-	Packages     []PackageVersion
+	ID           string           `json:"ID,omitempty"`
+	ComponentRef string           `json:"ComponentRef,omitempty"`
+	CommitSHA    string           `json:"CommitSHA,omitempty"`
+	Ecosystem    string           `json:"Ecosystem"`
+	GeneratedAt  *time.Time       `json:"GeneratedAt,omitempty"`
+	SourceFormat string           `json:"SourceFormat"`
+	SourceBytes  int64            `json:"SourceBytes"`
+	Packages     []PackageVersion `json:"Packages"`
 }
 
 // PackageVersion mirrors engine/sbom.Package — kept local to the CLI so

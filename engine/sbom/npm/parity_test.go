@@ -1,6 +1,7 @@
 package npm_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -9,8 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -22,21 +21,21 @@ import (
 )
 
 // TestParserParity is the byte-identical contract between the Go and
-// Rust lockfile parsers. For every valid fixture it:
-//
-//  1. parses with the Go in-process parser,
-//  2. parses with the Rust sidecar over UDS,
-//  3. normalises both SBOMs (drops the volatile ID / GeneratedAt fields,
-//     re-marshals with alphabetical key ordering),
-//  4. diffs the resulting JSON byte-for-byte.
+// Rust lockfile parsers. Both parsers now return a pure
+// `domain.ParsedSBOM` (ID / GeneratedAt / ComponentRef / CommitSHA
+// moved to `engine/internal/ingestion.Ingest` — see ADR-0005), so the
+// earlier canonicalJSON normalisation shim is gone: for every valid
+// fixture we diff `json.Marshal(goResult)` and `json.Marshal(rustResult)`
+// byte-for-byte.
 //
 // Wrong-version and malformed fixtures are exercised separately —
 // TestParserParity_Errors below — to verify both parsers surface the
 // same error class.
 //
-// The test spawns `cargo run --release -p rampart-native-cli` from the
-// native/ workspace. If cargo or the Rust toolchain is unavailable the
-// test is skipped with a clear message; CI in Adım 8 enforces presence.
+// The test spawns the rampart-native binary (prebuilt once per process
+// via `ensureNativeBinary`). If cargo or the Rust toolchain is
+// unavailable the test is skipped with a clear message; CI in Adım 8
+// enforces presence.
 func TestParserParity(t *testing.T) {
 	handle := startNativeServer(t)
 	defer handle.close()
@@ -52,11 +51,6 @@ func TestParserParity(t *testing.T) {
 		"minimal.json",
 	}
 
-	fixedTime := time.Date(2026, 4, 20, 12, 0, 0, 0, time.UTC)
-	const fixedID = "01PARITYTEST0000000000000000"
-	const fixedComponentRef = "kind:Component/default/parity-target"
-	const fixedCommitSHA = "0000000000000000000000000000000000000000"
-
 	for _, name := range fixtures {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -66,29 +60,18 @@ func TestParserParity(t *testing.T) {
 			content, err := os.ReadFile(path)
 			require.NoError(t, err)
 
-			meta := npm.LockfileMeta{
-				SourcePath:   path,
-				ComponentRef: fixedComponentRef,
-				CommitSHA:    fixedCommitSHA,
-				GeneratedAt:  fixedTime,
-			}
-			goSbom, err := npm.NewParser().Parse(ctx, content, meta)
+			goParsed, err := npm.NewParser().Parse(ctx, content)
 			require.NoError(t, err, "go parse failed")
 
-			rustSbom, err := client.ParseNPMLockfile(ctx, content, native.LockfileMeta{
-				ComponentRef: fixedComponentRef,
-				CommitSHA:    fixedCommitSHA,
-				GeneratedAt:  fixedTime,
-				ID:           fixedID,
-			})
+			rustParsed, err := client.ParseNPMLockfile(ctx, content)
 			require.NoError(t, err, "rust parse failed")
 
-			// Equal-ignore-volatile-fields check.
-			goNorm := canonicalJSON(t, goSbom)
-			rustNorm := canonicalJSON(t, rustSbom)
-			require.Equal(t, goNorm, rustNorm,
-				"%s: parser outputs differ\n--- go ---\n%s\n--- rust ---\n%s",
-				name, goNorm, rustNorm)
+			goBytes := mustMarshal(t, goParsed)
+			rustBytes := mustMarshal(t, rustParsed)
+			if !bytes.Equal(goBytes, rustBytes) {
+				t.Fatalf("%s: parser outputs differ byte-for-byte\n--- go ---\n%s\n--- rust ---\n%s",
+					name, goBytes, rustBytes)
+			}
 		})
 	}
 }
@@ -103,8 +86,8 @@ func TestParserParity_Errors(t *testing.T) {
 	waitForPing(t, client, 10*time.Second)
 
 	cases := []struct {
-		file      string
-		goSentinel error
+		file         string
+		goSentinel   error
 		rustSentinel error
 	}{
 		{"malformed.json", npm.ErrMalformedLockfile, native.ErrMalformedLockfile},
@@ -119,12 +102,12 @@ func TestParserParity_Errors(t *testing.T) {
 			content, err := os.ReadFile(filepath.Join("../../testdata/lockfiles", tc.file))
 			require.NoError(t, err)
 
-			_, goErr := npm.NewParser().Parse(ctx, content, npm.LockfileMeta{})
+			_, goErr := npm.NewParser().Parse(ctx, content)
 			require.Error(t, goErr)
 			require.True(t, errors.Is(goErr, tc.goSentinel),
 				"go: expected %v, got %v", tc.goSentinel, goErr)
 
-			_, rustErr := client.ParseNPMLockfile(ctx, content, native.LockfileMeta{})
+			_, rustErr := client.ParseNPMLockfile(ctx, content)
 			require.Error(t, rustErr)
 			require.True(t, errors.Is(rustErr, tc.rustSentinel),
 				"rust: expected %v, got %v", tc.rustSentinel, rustErr)
@@ -134,35 +117,17 @@ func TestParserParity_Errors(t *testing.T) {
 
 // --- helpers ---------------------------------------------------------------
 
-// canonicalJSON emits a stable, alphabetically-keyed JSON with the
-// per-call-volatile fields stripped (ID, GeneratedAt). That is exactly
-// the surface TestParserParity claims must match between parsers.
-func canonicalJSON(t *testing.T, sbom *domain.SBOM) string {
+// mustMarshal produces a canonical byte sequence for a ParsedSBOM —
+// Go's `encoding/json` emits struct fields in declaration order, so two
+// marshals of the same struct shape are byte-identical. The Rust side
+// ships `ParsedSbom` with serde field-renames that match Go's default
+// Pascal-case output (see parser.rs). That's what "byte-identical"
+// means in the parity contract.
+func mustMarshal(t *testing.T, p *domain.ParsedSBOM) []byte {
 	t.Helper()
-	raw, err := json.Marshal(sbom)
+	raw, err := json.Marshal(p)
 	require.NoError(t, err)
-
-	var m map[string]any
-	require.NoError(t, json.Unmarshal(raw, &m))
-	delete(m, "ID")
-	delete(m, "GeneratedAt")
-
-	// json.Marshal on map[string]any sorts keys — canonical form.
-	out, err := json.Marshal(m)
-	require.NoError(t, err)
-	return sortPackageEntries(string(out))
-}
-
-// Package ordering inside each entry has already been enforced by both
-// parsers (sort by name then version). We still re-sort as a belt-and-
-// braces guard in case either side forgets.
-func sortPackageEntries(s string) string {
-	// crude but effective — we only sort the canonicalised string form.
-	// If Packages are structurally different we'd want a diff view; for
-	// raw byte-equality this is fine.
-	lines := strings.Split(s, "\n")
-	sort.Strings(lines)
-	return strings.Join(lines, "\n")
+	return raw
 }
 
 type serverHandle struct {

@@ -11,7 +11,6 @@
 package native
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
@@ -58,15 +57,6 @@ func New(socketPath string) *Client {
 	}
 }
 
-// LockfileMeta matches engine/sbom/npm.LockfileMeta (locally duplicated
-// to avoid a circular import).
-type LockfileMeta struct {
-	ComponentRef string
-	CommitSHA    string
-	GeneratedAt  time.Time
-	ID           string
-}
-
 // Ping sends a `ping` request and returns on `pong`. Primarily used by
 // /readyz handlers and container healthchecks.
 func (c *Client) Ping(ctx context.Context) error {
@@ -85,27 +75,18 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // ParseNPMLockfile asks the Rust parser to parse `content`. Returns a
-// *domain.SBOM reassembled from the wire payload. Errors are classified
-// via the sentinels in this package so callers can errors.Is on them.
-func (c *Client) ParseNPMLockfile(
-	ctx context.Context,
-	content []byte,
-	meta LockfileMeta,
-) (*domain.SBOM, error) {
-	var genAt string
-	if !meta.GeneratedAt.IsZero() {
-		genAt = meta.GeneratedAt.UTC().Format(time.RFC3339Nano)
-	}
-
+// *domain.ParsedSBOM — identity fields (ID, GeneratedAt, ComponentRef,
+// CommitSHA) are the caller's responsibility; wrap with
+// engine/internal/ingestion.Ingest when the engine wants a full SBOM.
+//
+// Errors are classified via the sentinels in this package so callers can
+// errors.Is on them.
+func (c *Client) ParseNPMLockfile(ctx context.Context, content []byte) (*domain.ParsedSBOM, error) {
 	req := request{
 		ID:   "parse-" + nowID(),
 		Kind: "parse_npm_lockfile",
 		Payload: &requestPayload{
-			Content:      base64.StdEncoding.EncodeToString(content),
-			ComponentRef: meta.ComponentRef,
-			CommitSHA:    meta.CommitSHA,
-			GeneratedAt:  genAt,
-			ID:           meta.ID,
+			Content: base64.StdEncoding.EncodeToString(content),
 		},
 	}
 	resp, err := c.roundTrip(ctx, req)
@@ -125,7 +106,7 @@ func (c *Client) ParseNPMLockfile(
 	if err := json.Unmarshal(resp.Payload, &pr); err != nil {
 		return nil, fmt.Errorf("%w: decode payload: %v", ErrMalformedResponse, err)
 	}
-	return &pr.SBOM, nil
+	return &pr.ParsedSBOM, nil
 }
 
 // --- wire types (private, mirror schemas/native-ipc.md) ---
@@ -137,11 +118,11 @@ type request struct {
 }
 
 type requestPayload struct {
-	Content      string `json:"content"`
-	ComponentRef string `json:"component_ref,omitempty"`
-	CommitSHA    string `json:"commit_sha,omitempty"`
-	GeneratedAt  string `json:"generated_at,omitempty"`
-	ID           string `json:"id,omitempty"`
+	// Base64-encoded lockfile body. Per the wire spec, this is the
+	// only field — identity (ID/GeneratedAt/ComponentRef/CommitSHA)
+	// moved to the engine-side ingestion layer after Adım 6 made the
+	// parser pure.
+	Content string `json:"content"`
 }
 
 type responseEnvelope struct {
@@ -157,8 +138,8 @@ type remoteError struct {
 }
 
 type parseResultPayload struct {
-	SBOM  domain.SBOM `json:"sbom"`
-	Stats parseStats  `json:"stats"`
+	ParsedSBOM domain.ParsedSBOM `json:"parsed_sbom"`
+	Stats      parseStats        `json:"stats"`
 }
 
 type parseStats struct {
@@ -240,7 +221,3 @@ func truncate(s string, n int) string {
 func nowID() string {
 	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
-
-// Ensure io.Reader is wired; this variable is only here to catch
-// accidental removal of the import by gofmt in future edits.
-var _ = bytes.NewReader

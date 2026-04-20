@@ -1,5 +1,8 @@
 // Package npm parses npm package-lock.json (lockfileVersion: 3) into
-// domain.SBOM values. v1 / v2 lockfiles return ErrUnsupportedLockfileVersion.
+// domain.ParsedSBOM values. v1 / v2 lockfiles return
+// ErrUnsupportedLockfileVersion. The parser is intentionally pure —
+// callers wrap the result with engine/internal/ingestion.Ingest to
+// attach ID / GeneratedAt / ComponentRef / CommitSHA. See ADR-0005.
 package npm
 
 import (
@@ -10,9 +13,7 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"time"
 
-	"github.com/oklog/ulid/v2"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 )
 
@@ -21,14 +22,6 @@ var (
 	ErrUnsupportedLockfileVersion = errors.New("unsupported lockfile version")
 	ErrEmptyLockfile              = errors.New("empty lockfile")
 )
-
-// LockfileMeta is per-parse metadata the parser attaches to the resulting SBOM.
-type LockfileMeta struct {
-	SourcePath   string
-	ComponentRef string
-	CommitSHA    string
-	GeneratedAt  time.Time
-}
 
 // Parser is stateless and safe for concurrent use.
 type Parser struct {
@@ -46,12 +39,12 @@ func NewParserWithLogger(log *slog.Logger) *Parser {
 	return &Parser{log: log}
 }
 
-// Parse reads a package-lock.json body and returns the SBOM.
+// Parse reads a package-lock.json body and returns a pure ParsedSBOM.
 //
 // Errors wrap one of the exported sentinels (ErrMalformedLockfile,
 // ErrUnsupportedLockfileVersion, ErrEmptyLockfile) with detail context,
 // so callers should use errors.Is.
-func (p *Parser) Parse(ctx context.Context, content []byte, meta LockfileMeta) (*domain.SBOM, error) {
+func (p *Parser) Parse(ctx context.Context, content []byte) (*domain.ParsedSBOM, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -91,8 +84,9 @@ func (p *Parser) Parse(ctx context.Context, content []byte, meta LockfileMeta) (
 		})
 	}
 
-	// Deterministic ordering — makes Go/Rust parser outputs directly comparable
-	// for the parity test in Adım 6.
+	// Deterministic ordering — the parity test in `parity_test.go`
+	// compares Go and Rust outputs byte-for-byte, so both sides must
+	// agree on (name, version) ordering.
 	sort.Slice(pkgs, func(i, j int) bool {
 		if pkgs[i].Name != pkgs[j].Name {
 			return pkgs[i].Name < pkgs[j].Name
@@ -100,17 +94,8 @@ func (p *Parser) Parse(ctx context.Context, content []byte, meta LockfileMeta) (
 		return pkgs[i].Version < pkgs[j].Version
 	})
 
-	generatedAt := meta.GeneratedAt
-	if generatedAt.IsZero() {
-		generatedAt = time.Now().UTC()
-	}
-
-	return &domain.SBOM{
-		ID:           ulid.Make().String(),
-		ComponentRef: meta.ComponentRef,
-		CommitSHA:    meta.CommitSHA,
+	return &domain.ParsedSBOM{
 		Ecosystem:    "npm",
-		GeneratedAt:  generatedAt,
 		Packages:     pkgs,
 		SourceFormat: "npm-package-lock-v3",
 		SourceBytes:  int64(len(content)),

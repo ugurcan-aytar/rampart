@@ -23,15 +23,10 @@ func readFixture(t *testing.T, name string) []byte {
 
 func TestParse_AxiosCompromise(t *testing.T) {
 	p := npm.NewParser()
-	s, err := p.Parse(context.Background(), readFixture(t, "axios-compromise.json"), npm.LockfileMeta{
-		ComponentRef: "kind:Component/default/vulnerable-app",
-		CommitSHA:    "abc123",
-	})
+	s, err := p.Parse(context.Background(), readFixture(t, "axios-compromise.json"))
 	require.NoError(t, err)
 	require.Equal(t, "npm", s.Ecosystem)
 	require.Equal(t, "npm-package-lock-v3", s.SourceFormat)
-	require.Equal(t, "kind:Component/default/vulnerable-app", s.ComponentRef)
-	require.Equal(t, "abc123", s.CommitSHA)
 
 	byName := map[string]domain.PackageVersion{}
 	for _, pkg := range s.Packages {
@@ -50,7 +45,7 @@ func TestParse_AxiosCompromise(t *testing.T) {
 
 func TestParse_SimpleWebapp(t *testing.T) {
 	p := npm.NewParser()
-	s, err := p.Parse(context.Background(), readFixture(t, "simple-webapp.json"), npm.LockfileMeta{})
+	s, err := p.Parse(context.Background(), readFixture(t, "simple-webapp.json"))
 	require.NoError(t, err)
 	require.NotEmpty(t, s.Packages)
 
@@ -91,7 +86,7 @@ func TestParse_SimpleWebapp(t *testing.T) {
 
 func TestParse_Workspaces(t *testing.T) {
 	p := npm.NewParser()
-	s, err := p.Parse(context.Background(), readFixture(t, "with-workspaces.json"), npm.LockfileMeta{})
+	s, err := p.Parse(context.Background(), readFixture(t, "with-workspaces.json"))
 	require.NoError(t, err)
 
 	// Workspace source paths ("packages/app", "packages/lib") and their
@@ -115,7 +110,7 @@ func TestParse_Workspaces(t *testing.T) {
 
 func TestParse_Scoped(t *testing.T) {
 	p := npm.NewParser()
-	s, err := p.Parse(context.Background(), readFixture(t, "with-scoped.json"), npm.LockfileMeta{})
+	s, err := p.Parse(context.Background(), readFixture(t, "with-scoped.json"))
 	require.NoError(t, err)
 
 	byPURL := map[string]bool{}
@@ -129,21 +124,21 @@ func TestParse_Scoped(t *testing.T) {
 
 func TestParse_Empty(t *testing.T) {
 	p := npm.NewParser()
-	s, err := p.Parse(context.Background(), readFixture(t, "minimal.json"), npm.LockfileMeta{})
+	s, err := p.Parse(context.Background(), readFixture(t, "minimal.json"))
 	require.NoError(t, err)
 	require.Equal(t, 0, len(s.Packages), "only-root lockfile yields zero installed packages")
 }
 
 func TestParse_MalformedJSON(t *testing.T) {
 	p := npm.NewParser()
-	_, err := p.Parse(context.Background(), readFixture(t, "malformed.json"), npm.LockfileMeta{})
+	_, err := p.Parse(context.Background(), readFixture(t, "malformed.json"))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, npm.ErrMalformedLockfile))
 }
 
 func TestParse_UnsupportedVersion(t *testing.T) {
 	p := npm.NewParser()
-	_, err := p.Parse(context.Background(), readFixture(t, "wrong-version.json"), npm.LockfileMeta{})
+	_, err := p.Parse(context.Background(), readFixture(t, "wrong-version.json"))
 	require.Error(t, err)
 	require.True(t, errors.Is(err, npm.ErrUnsupportedLockfileVersion))
 }
@@ -151,17 +146,17 @@ func TestParse_UnsupportedVersion(t *testing.T) {
 func TestParse_PackagesAbsent(t *testing.T) {
 	p := npm.NewParser()
 	body := []byte(`{"name":"x","version":"1.0.0","lockfileVersion":3}`)
-	_, err := p.Parse(context.Background(), body, npm.LockfileMeta{})
+	_, err := p.Parse(context.Background(), body)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, npm.ErrEmptyLockfile))
 }
 
 func TestParse_EmptyPackagesMap(t *testing.T) {
 	// Differs from PackagesAbsent: the key is present but the map is empty.
-	// Treating this as an error is unhelpful; return a 0-package SBOM.
+	// Treating this as an error is unhelpful; return a 0-package ParsedSBOM.
 	p := npm.NewParser()
 	body := []byte(`{"name":"x","version":"1.0.0","lockfileVersion":3,"packages":{}}`)
-	s, err := p.Parse(context.Background(), body, npm.LockfileMeta{})
+	s, err := p.Parse(context.Background(), body)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(s.Packages))
 }
@@ -170,7 +165,7 @@ func TestParse_ContextCancelled(t *testing.T) {
 	p := npm.NewParser()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := p.Parse(ctx, []byte(`{}`), npm.LockfileMeta{})
+	_, err := p.Parse(ctx, []byte(`{}`))
 	require.Error(t, err)
 	require.ErrorIs(t, err, context.Canceled)
 }

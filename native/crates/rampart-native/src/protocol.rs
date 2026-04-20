@@ -34,22 +34,10 @@ pub enum RequestPayload {
 #[derive(Debug, Deserialize)]
 pub struct ParseNpmLockfilePayload {
     /// Base64-encoded lockfile bytes. Binary-safe framing so a bare-JSON
-    /// wire doesn't need to worry about escaping a giant blob.
+    /// wire doesn't need to worry about escaping a giant blob. This is
+    /// the only field — identity (ID, GeneratedAt, ComponentRef,
+    /// CommitSHA) is the engine's responsibility; see ADR-0005.
     pub content: String,
-    #[serde(default)]
-    pub component_ref: Option<String>,
-    #[serde(default)]
-    pub commit_sha: Option<String>,
-    /// Optional RFC3339 timestamp the caller wants stamped on the SBOM.
-    /// When empty the server fills in its own UTC now — parity test
-    /// always provides this so Go/Rust outputs are bit-identical.
-    #[serde(default)]
-    pub generated_at: Option<String>,
-    /// Optional ULID the caller wants the SBOM to carry. Parity test
-    /// supplies this; production callers leave empty and the server
-    /// generates one.
-    #[serde(default)]
-    pub id: Option<String>,
 }
 
 /// Response envelope: either a `payload` object (success) or an `error`
@@ -78,10 +66,12 @@ pub struct ParseStats {
     pub bytes_read: usize,
 }
 
-/// Response body for a successful `parse_npm_lockfile`.
+/// Response body for a successful `parse_npm_lockfile`. The payload
+/// carries the pure parse result — the Go engine wraps it into a full
+/// SBOM (ID, GeneratedAt, ComponentRef, CommitSHA) on its side.
 #[derive(Debug, Serialize)]
 pub struct ParseResult {
-    pub sbom: crate::parser::Sbom,
+    pub parsed_sbom: crate::parser::ParsedSbom,
     pub stats: ParseStats,
 }
 
@@ -102,9 +92,7 @@ mod tests {
             "id": "r2",
             "type": "parse_npm_lockfile",
             "payload": {
-                "content": "eyJsb2NrZmlsZVZlcnNpb24iOjN9",
-                "component_ref": "kind:Component/default/web",
-                "commit_sha": "abc"
+                "content": "eyJsb2NrZmlsZVZlcnNpb24iOjN9"
             }
         }"#;
         let req: Request = serde_json::from_str(raw).unwrap();
@@ -112,10 +100,6 @@ mod tests {
         match req.payload {
             Some(RequestPayload::ParseNpmLockfile(p)) => {
                 assert!(!p.content.is_empty());
-                assert_eq!(
-                    p.component_ref.as_deref(),
-                    Some("kind:Component/default/web")
-                );
             }
             _ => panic!("expected ParseNpmLockfile payload"),
         }

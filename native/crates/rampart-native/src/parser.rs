@@ -2,8 +2,13 @@
 //!
 //! Byte-for-byte compatible with `engine/sbom/npm.Parser` in Go — field
 //! names, ordering, scope semantics, and the PURL canonicalisation for
-//! scoped packages all match. The Go side's `parity_test.go` enforces
-//! that contract on every fixture in `engine/testdata/lockfiles/`.
+//! scoped packages all match. The Go side's `parity_test.go` diffs the
+//! two outputs after a `canonical_json` marshal on every fixture in
+//! `engine/testdata/lockfiles/` (no normalisation shim — see ADR-0005).
+//!
+//! The parser is pure: it owns lockfile-bytes-to-packages logic and
+//! nothing else. Identity (SBOM ID, GeneratedAt, ComponentRef,
+//! CommitSHA) is stamped engine-side in `engine/internal/ingestion`.
 //!
 //! What this parser does NOT do:
 //!   - v1 / v2 lockfiles: returns [`ParseError::UnsupportedVersion`]
@@ -52,22 +57,15 @@ struct LockPackage {
     link: bool,
 }
 
-/// SBOM is the public output shape. The `#[serde(rename = "…")]` dance
-/// keeps field names identical to Go's default struct-field serialisation
-/// (Pascal-cased identifiers without tags) so the parity test can diff
-/// byte-for-byte.
+/// Pure parse result — no ID, no GeneratedAt, no ComponentRef, no
+/// CommitSHA. The engine wraps this into a full `domain.SBOM` via
+/// `engine/internal/ingestion.Ingest`. The `#[serde(rename = "…")]`
+/// dance keeps field names identical to Go's default struct-field
+/// serialisation so the parity test can diff byte-for-byte.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct Sbom {
-    #[serde(rename = "ID")]
-    pub id: String,
-    #[serde(rename = "ComponentRef")]
-    pub component_ref: String,
-    #[serde(rename = "CommitSHA")]
-    pub commit_sha: String,
+pub struct ParsedSbom {
     #[serde(rename = "Ecosystem")]
     pub ecosystem: String,
-    #[serde(rename = "GeneratedAt")]
-    pub generated_at: String,
     #[serde(rename = "Packages")]
     pub packages: Vec<PackageVersion>,
     #[serde(rename = "SourceFormat")]
@@ -95,19 +93,7 @@ pub struct PackageVersion {
     pub integrity: String,
 }
 
-/// Metadata the caller attaches to the parsed SBOM — matches the Go
-/// side's `npm.LockfileMeta`. `generated_at` must be pre-formatted
-/// (RFC3339 string); leaving it empty tells the parser to fill with its
-/// own `now()`, but the parity test always overrides explicitly.
-#[derive(Debug, Clone, Default)]
-pub struct Meta {
-    pub component_ref: String,
-    pub commit_sha: String,
-    pub generated_at: String,
-    pub id: String,
-}
-
-/// Parse a `package-lock.json` body into an SBOM.
+/// Parse a `package-lock.json` body into a [`ParsedSbom`].
 ///
 /// The Go parser at `engine/sbom/npm/parser.go` is the reference
 /// implementation; every filtering / skipping rule here mirrors a
@@ -116,11 +102,11 @@ pub struct Meta {
 ///   - root entry (`""` key) → skipped
 ///   - `link: true` workspace symlinks → skipped
 ///   - paths without `node_modules/` in them (workspace source paths) → skipped
-///   - missing `version` → skipped with a warn (parity: Go does the same)
+///   - missing `version` → skipped (parity: Go does the same)
 ///
 /// Packages are sorted by (name, version) before return — matches Go's
 /// `sort.Slice` call; important for the byte-identical parity test.
-pub fn parse(content: &[u8], meta: &Meta) -> Result<Sbom, ParseError> {
+pub fn parse(content: &[u8]) -> Result<ParsedSbom, ParseError> {
     let lf: Lockfile = serde_json::from_slice(content)?;
     if lf.lockfile_version != 3 {
         return Err(ParseError::UnsupportedVersion(lf.lockfile_version));
@@ -133,7 +119,6 @@ pub fn parse(content: &[u8], meta: &Meta) -> Result<Sbom, ParseError> {
             continue;
         }
         let Some(version) = &pkg.version else {
-            // No version on a non-link, non-root entry — Go logs a warn and skips.
             continue;
         };
         let name = extract_name(path);
@@ -155,12 +140,8 @@ pub fn parse(content: &[u8], meta: &Meta) -> Result<Sbom, ParseError> {
     // (Name, Version).
     packages.sort_by(|a, b| a.name.cmp(&b.name).then(a.version.cmp(&b.version)));
 
-    Ok(Sbom {
-        id: meta.id.clone(),
-        component_ref: meta.component_ref.clone(),
-        commit_sha: meta.commit_sha.clone(),
+    Ok(ParsedSbom {
         ecosystem: "npm".to_string(),
-        generated_at: meta.generated_at.clone(),
         packages,
         source_format: "npm-package-lock-v3".to_string(),
         source_bytes: content.len() as i64,
@@ -299,7 +280,7 @@ mod tests {
     #[test]
     fn parse_minimal_yields_empty_packages() {
         let body = r#"{"name":"x","version":"1","lockfileVersion":3,"packages":{"": {"name":"x","version":"1"}}}"#;
-        let sbom = parse(body.as_bytes(), &Meta::default()).expect("should parse");
+        let sbom = parse(body.as_bytes()).expect("should parse");
         assert!(sbom.packages.is_empty());
         assert_eq!(sbom.ecosystem, "npm");
         assert_eq!(sbom.source_format, "npm-package-lock-v3");
@@ -308,20 +289,20 @@ mod tests {
     #[test]
     fn parse_rejects_v2() {
         let body = r#"{"lockfileVersion":2,"packages":{}}"#;
-        let err = parse(body.as_bytes(), &Meta::default()).unwrap_err();
+        let err = parse(body.as_bytes()).unwrap_err();
         assert!(matches!(err, ParseError::UnsupportedVersion(2)));
     }
 
     #[test]
     fn parse_rejects_missing_packages_key() {
         let body = r#"{"name":"x","lockfileVersion":3}"#;
-        let err = parse(body.as_bytes(), &Meta::default()).unwrap_err();
+        let err = parse(body.as_bytes()).unwrap_err();
         assert!(matches!(err, ParseError::Empty));
     }
 
     #[test]
     fn parse_rejects_malformed_json() {
-        let err = parse(b"{broken", &Meta::default()).unwrap_err();
+        let err = parse(b"{broken").unwrap_err();
         assert!(matches!(err, ParseError::Malformed(_)));
     }
 }

@@ -24,8 +24,9 @@ Every request / response is one **length-prefixed JSON frame**:
 ```
 
 Hard cap per frame: **100 MiB** (enforced by the server — a bigger prefix
-is refused as `InvalidData`). This absorbs the 50 MiB `huge-monorepo.json`
-benchmark fixture with headroom.
+is refused as `InvalidData`). This absorbs the 15 MiB `huge-100k-pkgs.json`
+benchmark fixture with order-of-magnitude headroom for the larger
+synthetic fixtures Adım 8 CI may generate.
 
 A single TCP connection can carry many frames back-to-back. The server
 handles each request in turn; the client currently opens one connection
@@ -49,7 +50,9 @@ Health probe. Response:
 {"id": "r-any", "type": "pong", "payload": {}}
 ```
 
-Used by the container health check and by the Go client's `Ping` method.
+Used by the Go client's `Ping` method (and, in Adım 7, by a dedicated
+prober binary — distroless containers have no shell, so the compose
+healthcheck can't speak the protocol directly).
 
 ### `parse_npm_lockfile`
 
@@ -58,21 +61,19 @@ Used by the container health check and by the Go client's `Ping` method.
   "id": "req-abc123",
   "type": "parse_npm_lockfile",
   "payload": {
-    "content": "<base64 of package-lock.json bytes>",
-    "component_ref": "kind:Component/default/web-app",
-    "commit_sha": "abc123",
-    "generated_at": "2026-04-20T12:00:00Z",
-    "id": "01KPAR-optional-sbom-ulid"
+    "content": "<base64 of package-lock.json bytes>"
   }
 }
 ```
 
 `content` is **base64**-encoded lockfile bytes so the wire remains bare
-JSON regardless of the lockfile's own UTF-8 content. `component_ref`,
-`commit_sha`, `generated_at`, and `id` are optional — when omitted the
-server stamps empty strings / its own UTC `now()` / a freshly-generated
-ULID. Parity tests provide all four explicitly so Go and Rust outputs
-are bit-identical.
+JSON regardless of the lockfile's own UTF-8 content. **No other fields.**
+
+ADR-0005 makes the parser pure: identity (`id`, `generated_at`,
+`component_ref`, `commit_sha`) is stamped by the engine's ingestion
+layer — see `engine/ingestion`. The earlier revision of this payload
+carried those fields and the parity test normalised them out; the new
+shape lets Go and Rust outputs diff byte-for-byte with zero shims.
 
 Success response:
 
@@ -81,12 +82,8 @@ Success response:
   "id": "req-abc123",
   "type": "parse_result",
   "payload": {
-    "sbom": {
-      "ID": "01KPAR-...",
-      "ComponentRef": "kind:Component/default/web-app",
-      "CommitSHA": "abc123",
+    "parsed_sbom": {
       "Ecosystem": "npm",
-      "GeneratedAt": "2026-04-20T12:00:00Z",
       "Packages": [
         {
           "Ecosystem": "npm",
@@ -109,10 +106,10 @@ Success response:
 }
 ```
 
-The SBOM shape matches `engine/internal/domain.SBOM` as serialised by
-Go's default `encoding/json` — Pascal-cased field names, no rename
-tags, `null` for empty `Scope` — so Go/Rust outputs compare
-byte-identical through the shared normalisation in `parity_test.go`.
+The `parsed_sbom` shape matches `engine/internal/domain.ParsedSBOM` as
+serialised by Go's default `encoding/json` — Pascal-cased field names,
+no rename tags, `null` for empty `Scope` — so Go and Rust outputs are
+byte-identical out of the parser.
 
 ### `shutdown`
 
@@ -158,9 +155,10 @@ switch on `code` regardless of which parser produced the result.
 ## Versioning
 
 `info.version` on the wire is today `"0.1.0"` (tracked implicitly by the
-crate version). A breaking change to payload shape bumps the minor
-version and adds a `version_required` field to `ping` responses so older
-clients can refuse gracefully — deferred to Phase 2.
+crate version). This is the first tagged shape; a later breaking change
+to the payload bumps the minor version and adds a `version_required`
+field to `ping` responses so older clients can refuse gracefully —
+deferred to Phase 2.
 
 ## Why not protobuf / gRPC
 

@@ -27,7 +27,7 @@ Every runtime dependency in rampart is justified here. CI will fail (Adım 8) if
 ### github.com/oklog/ulid/v2
 
 - **Source:** https://github.com/oklog/ulid
-- **Why:** ULID (Universally Unique Lexicographically Sortable Identifier) for SBOM IDs, incident IDs, remediation IDs. Sortable by creation time, URL-safe, monotonic within the same millisecond — this matters because the incident UI lists events time-ordered by ID.
+- **Why:** ULID (Universally Unique Lexicographically Sortable Identifier) for SBOM IDs, incident IDs, remediation IDs. Sortable by creation time, URL-safe, monotonic within the same millisecond — this matters because the incident UI lists events time-ordered by ID. Ramped into the codebase at `engine/ingestion.Ingest`, where the engine wraps a parser-produced `ParsedSBOM` into a full `SBOM`. ADR-0005 records the "parser is pure, caller owns identity" split; the parsers themselves never touch this crate.
 - **Alternative considered:** `google/uuid` v4 — unsortable, would need a separate `opened_at` index for time ordering; `xid` — good, but ULID is more widely recognised in the Backstage ecosystem (Roadie and Spotify internal tooling both use it).
 - **Risk:** Maintained by oklog (Peter Bourgon + collaborators), stable since 2018, two-digit release cadence, pure-Go, zero external deps. Low.
 - **Upgrade policy:** patch automatic via Dependabot, minor manual review, major ADR.
@@ -43,7 +43,7 @@ Same discipline as the Go section — every crate declared in
 
 - **Source:** https://serde.rs + https://docs.rs/serde_json
 - **Why:** Rust's de-facto serialization framework. `serde_json` powers the wire-format round-trip in the UDS protocol and the SBOM payload itself; `serde`'s `derive` macros generate the Serialize/Deserialize impls for every IPC type. Stdlib has no JSON support.
-- **Alternative considered:** `simd-json` (https://github.com/simd-lite/simd-json) — faster on very large inputs but has a strict platform requirement (AVX2 / NEON baseline) and inserts a hard dependency on its own error types. Rejected: for 50 MiB lockfiles we measured `serde_json` as "fast enough" (see `docs/benchmarks/sbom-parser.md`); SIMD-JSON optimisation is a Phase 3 lever if the IPC floor stops dominating. `sonic-rs` (https://github.com/cloudwego/sonic-rs) — same argument, plus platform availability on macOS arm64 is less mature at time of writing.
+- **Alternative considered:** `simd-json` (https://github.com/simd-lite/simd-json) — faster on very large inputs but requires an AVX2 / NEON baseline and inserts a hard dependency on its own error types. Rejected: Adım 6 benchmarks (up to a 15 MiB, 100 k-package synthetic fixture; see `docs/benchmarks/sbom-parser.md`) show the IPC envelope — not `serde_json` parse time — dominates the Rust round-trip. Replacing the JSON parser would move the Rust-side cost, not the Go-client-visible cost. `sonic-rs` (https://github.com/cloudwego/sonic-rs) — same argument, plus platform availability on macOS arm64 is less mature at time of writing.
 - **Risk:** serde is maintained by dtolnay + the serde-rs org; serde_json is in the same org. Both are in the top-10 most-depended-on crates on crates.io — any bug affecting rampart would affect half the Rust ecosystem first, so we benefit from shared vigilance.
 - **Upgrade policy:** patch automatic, minor manual review, major ADR.
 
@@ -61,14 +61,6 @@ Same discipline as the Go section — every crate declared in
 - **Why:** Wire-format carries lockfile bytes as base64 in a JSON string (see `schemas/native-ipc.md`). stdlib has no base64 today.
 - **Alternative considered:** hand-rolled decoder (unsafe is forbidden by `[workspace.lints.rust].unsafe_code = "forbid"`; a pure-Rust decoder is small but `base64` is a zero-dep crate and auditing it is trivial).
 - **Risk:** Maintainer: marshallpierce; stable since 2018, 1.5B+ downloads. Zero runtime deps. Low.
-- **Upgrade policy:** patch automatic, minor manual review.
-
-### chrono (v0.4, features: `std`, `clock`, `default-features = false`)
-
-- **Source:** https://docs.rs/chrono
-- **Why:** RFC3339 nanosecond-precision formatting for `SBOM.GeneratedAt`. The Go side uses `time.RFC3339Nano` and refuses empty strings; the Rust side needs to format an equivalent string when the caller doesn't supply one. `std::time::SystemTime` has no RFC3339 formatter — that's what chrono buys us.
-- **Alternative considered:** `time` crate (https://docs.rs/time) — equivalent feature set, slightly smaller. Either works; chrono's docs and StackOverflow footprint are larger, which helps onboarding. Trivial to swap if a CVE forces the issue.
-- **Risk:** Maintained by the chrono-rs org (~10 active maintainers), ~500M downloads. Low — `default-features = false` drops the `oldtime` + `serde` + `wasmbind` surface we don't need.
 - **Upgrade policy:** patch automatic, minor manual review.
 
 ### thiserror (v2)

@@ -36,7 +36,7 @@ type StrategyParser struct {
 // NativeClient is the subset of *native.Client we need — declared so
 // tests can swap in a fake without spinning up a real UDS server.
 type NativeClient interface {
-	ParseNPMLockfile(ctx context.Context, content []byte, meta native.LockfileMeta) (*domain.SBOM, error)
+	ParseNPMLockfile(ctx context.Context, content []byte) (*domain.ParsedSBOM, error)
 	Ping(ctx context.Context) error
 }
 
@@ -56,22 +56,18 @@ func (sp *StrategyParser) Strategy() Strategy {
 	return sp.strategy
 }
 
-// Parse hands the content to the chosen parser backend. Metadata flows
-// through unchanged — both parsers stamp ComponentRef / CommitSHA /
-// GeneratedAt identically so parity_test.go can diff the outputs.
-func (sp *StrategyParser) Parse(ctx context.Context, content []byte, meta LockfileMeta) (*domain.SBOM, error) {
+// Parse hands the content to the chosen parser backend. Returns a
+// ParsedSBOM — both backends produce byte-identical output, enforced
+// by parity_test.go.
+func (sp *StrategyParser) Parse(ctx context.Context, content []byte) (*domain.ParsedSBOM, error) {
 	switch sp.strategy {
 	case StrategyNative:
 		if sp.native == nil {
 			return nil, ErrNativeUnconfigured
 		}
-		return sp.native.ParseNPMLockfile(ctx, content, native.LockfileMeta{
-			ComponentRef: meta.ComponentRef,
-			CommitSHA:    meta.CommitSHA,
-			GeneratedAt:  meta.GeneratedAt,
-		})
+		return sp.native.ParseNPMLockfile(ctx, content)
 	case StrategyGo, "":
-		return sp.goParser.Parse(ctx, content, meta)
+		return sp.goParser.Parse(ctx, content)
 	default:
 		return nil, errors.New("npm parser: unknown strategy " + string(sp.strategy))
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/api"
 	"github.com/ugurcan-aytar/rampart/engine/internal/config"
 	"github.com/ugurcan-aytar/rampart/engine/internal/events"
+	"github.com/ugurcan-aytar/rampart/engine/ingestion"
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
@@ -122,16 +123,18 @@ func (a *App) Close() error {
 // stdout.
 //
 // Invoked via:
-//   engine parse-sbom
-//       [--parser go|native]
-//       [--component-ref ref]
-//       [--commit-sha sha]
-//       [--native-socket /path]
-//       <lockfile>
 //
-// `--parser native` spawns the Rust sidecar's client against a running
-// rampart-native process; the socket path comes from --native-socket or
-// the RAMPART_NATIVE_SOCKET env var (matches the server default).
+//	engine parse-sbom
+//	    [--parser go|native]
+//	    [--component-ref ref]
+//	    [--commit-sha sha]
+//	    [--native-socket /path]
+//	    <lockfile>
+//
+// With neither `--component-ref` nor `--commit-sha`, the command emits a
+// pure ParsedSBOM (no ID, no GeneratedAt). When either is supplied, the
+// engine runs the ingestion layer to produce a full SBOM with a freshly
+// minted ULID. Mirrors the CLI's behaviour in `cli/internal/commands/scan.go`.
 func runParseSBOM(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("parse-sbom", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -172,16 +175,15 @@ func runParseSBOM(ctx context.Context, args []string) error {
 	fmt.Fprintf(os.Stderr, "parse-sbom: strategy=%s socket=%s bytes=%d\n",
 		strategy, *nativeSocket, len(content))
 
-	sbom, err := strategyParser.Parse(ctx, content, npm.LockfileMeta{
-		SourcePath:   path,
-		ComponentRef: *componentRef,
-		CommitSHA:    *commitSHA,
-	})
+	parsed, err := strategyParser.Parse(ctx, content)
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	return enc.Encode(sbom)
+	if *componentRef == "" && *commitSHA == "" {
+		return enc.Encode(parsed)
+	}
+	return enc.Encode(ingestion.Ingest(parsed, *componentRef, *commitSHA))
 }

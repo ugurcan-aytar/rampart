@@ -37,11 +37,6 @@ tracing = "0.1"           # structured logging; ref: https://tracing.rs
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 base64 = "0.22"           # stdlib-style {encode,decode} for wire payloads
-# chrono: RFC3339 formatting for SBOM.GeneratedAt. Pinned to default-
-# features off + std/clock only (no serde integration — we format into
-# an owned String in the ipc layer).
-# Ref: https://docs.rs/chrono/latest/chrono/#features
-chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"    # pure Rust only — keeps auditing trivial

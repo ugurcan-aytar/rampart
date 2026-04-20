@@ -18,10 +18,14 @@ lockfile that saturates Node's JSON.parse. Two options for the parser:
    reflection-driven and eats memory proportional to the unmarshalled
    map.
 
-2. **Rust parser for the hot path.** `serde_json` is fast and Rust's
-   memory model lets us stream zero-copy in places `encoding/json`
-   can't. The question isn't whether Rust can help — it's how we
-   integrate it with a Go engine.
+2. **Rust parser for the hot path.** `serde_json` is fast in isolation
+   and Rust's memory model allows zero-copy shapes `encoding/json`
+   can't express. At the time of the decision the working assumption
+   was "this will win on huge lockfiles"; the measurements at Adım 6
+   close **falsified that** (see "Measured consequences" below). The
+   current reason to keep the separate Rust parser is architectural
+   isolation, not throughput — the decision below still holds on
+   those grounds.
 
 Three common integration shapes, all rejected in turn:
 
@@ -51,6 +55,17 @@ The engine opens a connection, writes one request frame, reads one
 response frame, closes. No cgo, no dynamic linking, no shared memory.
 Each side ships its own binary on its own release cadence; cross-compile
 stays single-toolchain per language.
+
+**The parser is pure; ID generation is the caller's responsibility.**
+Both parsers (Go in-process, Rust over UDS) return a `ParsedSBOM` —
+`{Ecosystem, Packages, SourceFormat, SourceBytes}`, and nothing else.
+Turning a `ParsedSBOM` into a full `SBOM` (stamping `ID`, `GeneratedAt`,
+`ComponentRef`, `CommitSHA`) happens in the engine's ingestion layer
+(`engine/ingestion.Ingest`). This split lets the parity test compare
+parser outputs byte-for-byte with zero normalisation shims — which is
+the strongest possible definition of "the two parsers are twins". The
+earlier design stamped identity inside the parser and the parity test
+worked around the per-call-volatile fields; that was a shim and is gone.
 
 ```
  ┌────────────┐   UDS SOCK_STREAM    ┌────────────────┐
@@ -87,11 +102,12 @@ have the sidecar available.
 - **One more deployable.** Docker Compose gains a `rampart-native`
   service; `depends_on.service_healthy` + shared volume for the UDS
   socket. Demo-stack (Adım 7) complexity grows one box.
-- **IPC overhead on small lockfiles.** Every call is one UDS connect +
-  one JSON round-trip. For a 765-byte axios fixture the Go parser
-  finishes before the socket handshake completes; we measured this
-  directly (see `docs/benchmarks/sbom-parser.md`). The strategy knob
-  lets operators keep the Go path on workloads where it wins.
+- **IPC overhead is load-bearing at every size we measured.** Small
+  lockfiles eat the ~50 µs UDS handshake; large ones eat the base64
+  + JSON-envelope round-trip. Go wins 3–9× across the full fixture
+  matrix (`docs/benchmarks/sbom-parser.md`). The strategy knob lets
+  operators keep the Go path — which is today the right default on
+  every workload this benchmark covers.
 - **Platform scope: Linux + macOS only.** `tokio::net::UnixListener`
   and Go's `net.Listen("unix", …)` both require Unix. Windows clients
   route to named pipes (`\\.\pipe\...`) — different wire primitive,
@@ -129,6 +145,40 @@ have the sidecar available.
    on x86-64 (project README at https://github.com/bytedance/sonic
    lists supported architectures); our arm64 Linux deploy target does
    not fall in the fast path.
+
+## Measured consequences (2026-04-20, Adım 6 close)
+
+Benchmarks across a 1 KiB → 15 MiB range (7 fixtures, 2 → 100 000
+packages; table in `docs/benchmarks/sbom-parser.md`):
+
+- **The sidecar does not cross over in the tested range.** Go wins at
+  every input size — from 8.7× on the 765-byte axios fixture down to
+  3.1× on the 15 MiB, 100 000-package fixture.
+- **Native throughput plateaus at ~47 MB/s** past the small-fixture
+  regime. The bottleneck is not the Rust parser itself — it's the four
+  JSON/base64 boundaries in the wire protocol (Go base64 encode → UDS
+  → Rust base64 decode → serde_json parse → serde_json marshal of the
+  response → Go JSON unmarshal back into `domain.ParsedSBOM`). The
+  in-process Go path pays none of that.
+- **Phase 1's perf claim of "Rust wins on huge lockfiles" is
+  falsified.** That sentence is deleted from this ADR on purpose;
+  documentation the measurements contradict is worse than no claim.
+
+Three Phase-2 levers could change the picture — all need their own
+measurement rounds before any of them lands:
+
+1. Drop base64 + JSON on the response path (bincode / FlatBuffer /
+   Cap'n Proto over the same UDS framing).
+2. Connection pooling + request pipelining (amortise the ~50 µs UDS
+   handshake; helps small fixtures, not the 3× steady-state gap).
+3. Zero-copy `content` handoff via `SCM_RIGHTS` mmap — sidesteps the
+   input-side base64 round-trip entirely.
+
+Until one of those lands, `parser.strategy: go` is **measurably the
+right default**. The sidecar stays because its non-performance wins
+(zero cgo in the Go build, independent release cadence,
+wire-debuggable protocol, process-level isolation from the engine's
+storage layer) still hold.
 
 ## Verification
 

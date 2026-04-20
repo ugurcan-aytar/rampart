@@ -16,13 +16,12 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use base64::prelude::*;
-use chrono::{SecondsFormat, Utc};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use crate::parser::{parse, Meta};
+use crate::parser::parse;
 use crate::protocol::{ParseResult, ParseStats, Request, RequestPayload, Response, ResponseError};
 
 /// Maximum request frame size the server accepts: 100 MiB. A huge
@@ -246,40 +245,16 @@ fn handle_parse_npm(req: Request) -> Response {
             };
         }
     };
-    // Fill GeneratedAt with UTC now if the caller left it blank —
-    // mirrors the Go parser's behaviour and keeps the SBOM JSON
-    // unmarshallable on the Go side (time.Time refuses empty strings;
-    // RFC3339Nano here matches Go's time.RFC3339Nano format).
-    let generated_at = match p.generated_at {
-        Some(s) if !s.is_empty() => s,
-        _ => Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true),
-    };
-    // Same for ID: fall back to a stable prefix + nanos. Adım 7 wires
-    // a real ULID if callers need one in production; parity tests
-    // always pass an explicit id, so this branch is benchmark-only.
-    let id = match p.id {
-        Some(s) if !s.is_empty() => s,
-        _ => format!(
-            "rampart-native-{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
-        ),
-    };
-    let meta = Meta {
-        component_ref: p.component_ref.unwrap_or_default(),
-        commit_sha: p.commit_sha.unwrap_or_default(),
-        generated_at,
-        id,
-    };
     let start = Instant::now();
-    match parse(&content_bytes, &meta) {
-        Ok(sbom) => {
+    match parse(&content_bytes) {
+        Ok(parsed_sbom) => {
             let elapsed = start.elapsed();
             let stats = ParseStats {
                 parse_ms: elapsed.as_millis() as u64,
-                package_count: sbom.packages.len(),
+                package_count: parsed_sbom.packages.len(),
                 bytes_read: content_bytes.len(),
             };
-            let result = ParseResult { sbom, stats };
+            let result = ParseResult { parsed_sbom, stats };
             let payload = serde_json::to_value(&result).unwrap_or_default();
             Response {
                 id: req.id,

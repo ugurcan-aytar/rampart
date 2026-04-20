@@ -1,9 +1,17 @@
 # rampart-native
 
-Rust sidecar for the rampart engine. Parses large npm lockfiles and
-answers over a Unix Domain Socket. Byte-identical to the Go parser at
+Rust sidecar for the rampart engine. Parses npm lockfiles and answers
+over a Unix Domain Socket; byte-identical to the Go parser at
 `engine/sbom/npm/parser.go` — every valid fixture round-trips through
 the parity test in `engine/sbom/npm/parity_test.go`.
+
+The sidecar's value at Phase 1 is **architectural isolation** (separate
+process, separate FS mount, zero cgo in the Go build, independent
+release cadence), not throughput. Current measurements show the
+in-process Go parser winning at every input size we've benchmarked —
+the full table and an honest verdict live at
+`docs/benchmarks/sbom-parser.md`. ADR-0005 records the trade-off and
+the Phase-2 levers that could change the picture.
 
 Architecture: ADR-0005 — `docs/decisions/0005-no-cgo-rust-via-uds.md`.
 Wire protocol: `schemas/native-ipc.md`.

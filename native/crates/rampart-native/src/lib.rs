@@ -9,5 +9,5 @@ pub mod ipc;
 pub mod parser;
 pub mod protocol;
 
-pub use parser::{parse, PackageVersion, ParseError, Sbom};
+pub use parser::{parse, PackageVersion, ParseError, ParsedSbom};
 pub use protocol::{Request, RequestPayload, Response, ResponseError};
