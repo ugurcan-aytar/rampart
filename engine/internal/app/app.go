@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"log/slog"
@@ -104,12 +105,25 @@ func (a *App) Close() error {
 
 // runParseSBOM reads a lockfile from disk, parses it with the Go npm parser,
 // and writes the resulting SBOM as indented JSON to stdout.
-// Invoked via `engine parse-sbom <path>`.
+// Invoked via `engine parse-sbom [--component-ref ref] [--commit-sha sha] <path>`.
 func runParseSBOM(ctx context.Context, args []string) error {
-	if len(args) == 0 {
+	fs := flag.NewFlagSet("parse-sbom", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	componentRef := fs.String("component-ref", "", "component reference (e.g. component:default/web-app)")
+	commitSHA := fs.String("commit-sha", "", "commit sha the SBOM was taken at")
+	fs.Usage = func() {
+		fmt.Fprintln(os.Stderr, "usage: rampart parse-sbom [--component-ref ref] [--commit-sha sha] <lockfile>")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if fs.NArg() == 0 {
+		fs.Usage()
 		return errors.New("parse-sbom: missing lockfile path")
 	}
-	path := args[0]
+	path := fs.Arg(0)
+
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", path, err)
@@ -121,7 +135,11 @@ func runParseSBOM(ctx context.Context, args []string) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 
-	sbom, err := npm.NewParser().Parse(ctx, content, npm.LockfileMeta{SourcePath: path})
+	sbom, err := npm.NewParser().Parse(ctx, content, npm.LockfileMeta{
+		SourcePath:   path,
+		ComponentRef: *componentRef,
+		CommitSHA:    *commitSHA,
+	})
 	if err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}

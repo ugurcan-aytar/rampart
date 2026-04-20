@@ -57,6 +57,28 @@ func TestMain_ParseSBOMSubcommand_Axios(t *testing.T) {
 	require.Equal(t, "4.2.1", byName["plain-crypto-js"].Version)
 }
 
+func TestMain_ParseSBOM_WithFlags(t *testing.T) {
+	out, err := captureStdout(t, func() error {
+		return app.Main(context.Background(), []string{
+			"parse-sbom",
+			"--component-ref", "component:default/web-app",
+			"--commit-sha", "abc123deadbeef",
+			"../../testdata/lockfiles/axios-compromise.json",
+		})
+	})
+	require.NoError(t, err)
+
+	var sbom domain.SBOM
+	require.NoError(t, json.Unmarshal(out, &sbom))
+	require.Equal(t, "component:default/web-app", sbom.ComponentRef, "flag value must land on SBOM")
+	require.Equal(t, "abc123deadbeef", sbom.CommitSHA)
+}
+
+func TestMain_ParseSBOM_UnknownFlag(t *testing.T) {
+	err := app.Main(context.Background(), []string{"parse-sbom", "--nope", "x", "some.json"})
+	require.Error(t, err)
+}
+
 func TestMain_ParseSBOM_MissingArg(t *testing.T) {
 	err := app.Main(context.Background(), []string{"parse-sbom"})
 	require.Error(t, err)
