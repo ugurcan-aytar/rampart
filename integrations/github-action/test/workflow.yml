@@ -1,0 +1,15 @@
+# Local smoke test via nektos/act:
+#   act push --workflows integrations/github-action/test/workflow.yml
+# See integrations/github-action/README.md for inputs.
+name: rampart-action smoke
+on: [push]
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run rampart
+        uses: ./integrations/github-action
+        with:
+          lockfile: engine/testdata/lockfiles/axios-compromise.json

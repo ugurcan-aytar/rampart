@@ -1,0 +1,72 @@
+name: rampart
+description: >-
+  Scan an npm lockfile for supply-chain IoCs; upload findings as SARIF
+  to GitHub's code-scanning API.
+author: Uğurcan Aytar
+branding:
+  icon: shield
+  color: gray-dark
+
+inputs:
+  lockfile:
+    description: Path to the npm package-lock.json to scan.
+    required: true
+    default: package-lock.json
+  component-ref:
+    description: Backstage-style Component reference to attach (e.g. kind:Component/default/web-app).
+    required: false
+  commit-sha:
+    description: Git SHA the lockfile was taken at. Defaults to github.sha.
+    required: false
+  fail-on:
+    description: Severity threshold that fails the action (low | medium | high | critical). Phase 2.
+    required: false
+    default: high
+
+outputs:
+  sarif-path:
+    description: Filesystem path to the generated SARIF document.
+    value: ${{ steps.scan.outputs.sarif-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: "1.23"
+        cache: false
+
+    - name: Install rampart CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+        # Once the cli module is tagged for release, switch to @vX.Y.Z
+        # so users pick up a verified version. For now, @latest is fine —
+        # the action is a Phase 1 scaffold.
+        go install github.com/ugurcan-aytar/rampart/cli/cmd/rampart@latest
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        LOCKFILE: ${{ inputs.lockfile }}
+        COMPONENT_REF: ${{ inputs.component-ref }}
+        COMMIT_SHA: ${{ inputs.commit-sha || github.sha }}
+      run: |
+        set -euo pipefail
+        sarif_path="${RUNNER_TEMP:-/tmp}/rampart.sarif"
+        args=(scan --format sarif)
+        if [ -n "${COMPONENT_REF:-}" ]; then
+          args+=(--component-ref "$COMPONENT_REF")
+        fi
+        if [ -n "${COMMIT_SHA:-}" ]; then
+          args+=(--commit-sha "$COMMIT_SHA")
+        fi
+        rampart "${args[@]}" "$LOCKFILE" > "$sarif_path"
+        echo "sarif-path=$sarif_path" >> "$GITHUB_OUTPUT"
+
+    - name: Upload SARIF
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.scan.outputs.sarif-path }}
