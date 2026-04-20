@@ -9,10 +9,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
-	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/sbom/npm"
+	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
 
-const fixturesDir = "../../../../testdata/lockfiles"
+const fixturesDir = "../../testdata/lockfiles"
 
 func readFixture(t *testing.T, name string) []byte {
 	t.Helper()
