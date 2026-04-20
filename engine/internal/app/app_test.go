@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/ugurcan-aytar/rampart/engine/internal/app"
+	"github.com/ugurcan-aytar/rampart/engine/internal/config"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 )
 
@@ -87,4 +90,65 @@ func TestMain_ParseSBOM_MissingArg(t *testing.T) {
 func TestMain_ParseSBOM_MissingFile(t *testing.T) {
 	err := app.Main(context.Background(), []string{"parse-sbom", "/definitely/does/not/exist.json"})
 	require.Error(t, err)
+}
+
+// --- App.New + App.Run lifecycle -----------------------------------------
+//
+// The parse-sbom tests above exercise the subcommand dispatch inside Main.
+// These tests cover the server path: initialization (New) and lifecycle
+// (Run + graceful shutdown on context cancel) — which are two distinct
+// concerns and need to be verified separately.
+
+func silentLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestApp_New_WithDefaults(t *testing.T) {
+	cfg := config.Default()
+	cfg.HTTPAddr = "127.0.0.1:0"
+	a, err := app.New(context.Background(), cfg, silentLogger())
+	require.NoError(t, err)
+	require.NotNil(t, a)
+	require.NoError(t, a.Close())
+}
+
+func TestApp_New_NilLoggerFallsBack(t *testing.T) {
+	cfg := config.Default()
+	cfg.HTTPAddr = "127.0.0.1:0"
+	a, err := app.New(context.Background(), cfg, nil)
+	require.NoError(t, err, "nil logger must fall back to slog.Default()")
+	require.NotNil(t, a)
+	require.NoError(t, a.Close())
+}
+
+func TestApp_Run_GracefulShutdownOnCancel(t *testing.T) {
+	cfg := config.Default()
+	cfg.HTTPAddr = "127.0.0.1:0"
+	a, err := app.New(context.Background(), cfg, silentLogger())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = a.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- a.Run(ctx) }()
+
+	// Give the server a tick to bind before asking for shutdown.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "Run must return nil on graceful shutdown")
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not exit within 5s of context cancel")
+	}
+}
+
+func TestApp_Close_Idempotent(t *testing.T) {
+	cfg := config.Default()
+	cfg.HTTPAddr = "127.0.0.1:0"
+	a, err := app.New(context.Background(), cfg, silentLogger())
+	require.NoError(t, err)
+	require.NoError(t, a.Close())
+	require.NoError(t, a.Close(), "Close must be safe to call twice (memory backend is nil-op)")
 }
