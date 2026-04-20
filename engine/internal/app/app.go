@@ -36,12 +36,13 @@ func defaultNativeSocket() string {
 
 // App is the engine's runtime. Construct with New, drive with Run, release with Close.
 type App struct {
-	cfg     *config.Config
-	log     *slog.Logger
-	storage storage.Storage
-	trust   trust.Engine
-	events  *events.Bus
-	server  *http.Server
+	cfg               *config.Config
+	log               *slog.Logger
+	storage           storage.Storage
+	trust             trust.Engine
+	events            *events.Bus
+	server            *http.Server
+	effectiveStrategy npm.Strategy
 }
 
 // Main is the top-level dispatcher: subcommand if args[0] matches one, otherwise
@@ -57,7 +58,7 @@ func Main(ctx context.Context, args []string) error {
 }
 
 func runServer(ctx context.Context, _ []string) error {
-	cfg := config.Default()
+	cfg := config.FromEnv()
 	logger := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
 	a, err := New(ctx, cfg, logger)
 	if err != nil {
@@ -68,24 +69,39 @@ func runServer(ctx context.Context, _ []string) error {
 }
 
 // New wires storage, trust, the event bus, and the HTTP server.
-func New(_ context.Context, cfg *config.Config, log *slog.Logger) (*App, error) {
+//
+// The parser strategy is resolved here so the engine logs what it's
+// actually going to use on the first ingestion request, not just what
+// the operator asked for: requested=native with the sidecar down
+// yields `effective=go` and a warn entry, per ADR-0005 Final Decision.
+func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	store := memory.New()
 	bus := events.NewBus(cfg.SSESubscriberBuffer)
+
+	requested := npm.Strategy(cfg.ParserStrategy)
+	nativeClient := native.New(cfg.NativeSocketPath)
+	effective := npm.EffectiveStrategy(ctx, requested, nativeClient, log)
+	log.Info("parser strategy resolved",
+		"requested", string(requested),
+		"effective", string(effective),
+		"native_socket", cfg.NativeSocketPath)
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           api.NewServer(store, bus, cfg.SSEHeartbeatInterval).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return &App{
-		cfg:     cfg,
-		log:     log,
-		storage: store,
-		trust:   trust.AlwaysTrust{},
-		events:  bus,
-		server:  srv,
+		cfg:               cfg,
+		log:               log,
+		storage:           store,
+		trust:             trust.AlwaysTrust{},
+		events:            bus,
+		server:            srv,
+		effectiveStrategy: effective,
 	}, nil
 }
 

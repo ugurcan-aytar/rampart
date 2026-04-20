@@ -110,16 +110,26 @@ measurably correct at every input size this benchmark covers.
 
 ## Operational takeaway
 
-The `--parser` CLI flag and `ingestion.parser.strategy` config let an
-operator pick per deployment:
+Native sidecar is retained opt-in as a parser isolation feature.
+Throughput gap (1.8× at 100k pkgs) does not justify default deployment
+complexity; its value lies in defense-in-depth against malicious
+lockfile payloads, not performance.
 
-- **`go` (default)** — the right answer for every workload this
-  benchmark exercises.
-- **`native`** — the right answer when the sidecar's non-performance
-  properties (separate process, separate FS mount, zero cgo in the Go
-  build, independent release cadence, wire-level debuggability of the
-  protocol) are worth paying a 1.8× parse-cost tax for. That's the
-  honest portfolio value of `rampart-native` at Phase 1 close.
+Concrete Phase-1 deployment shape (ADR-0005 Final Decision):
+
+- **Default (`docker compose up`)** — engine only; the embedded Go
+  parser is used (`ingestion.parser.strategy: go`). One binary, one
+  runtime, no UDS volume to mount.
+- **Opt-in (`docker compose --profile native up` +
+  `RAMPART_PARSER_STRATEGY=native`)** — engine + `rampart-native`;
+  parser runs in a separate process, separate language runtime, with
+  no read access to the engine's storage layer. Recommended for
+  deployments ingesting SBOMs from untrusted or third-party sources.
+
+When the engine is configured to use `native` but the sidecar is
+unreachable, it logs a warn line and falls back to the Go parser —
+opt-in hardening must never prevent the engine from answering
+requests. See `TestEffectiveStrategy_FallsBackWhenNativeUnavailable`.
 
 ## Reproducing
 

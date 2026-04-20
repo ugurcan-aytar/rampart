@@ -1,13 +1,57 @@
-# Full demo stack for rampart.
+# Rampart demo stack.
 # Services come online as each module is scaffolded:
-#   engine           (Adım 2-3) — Go core, HTTP + SSE API
-#   rampart-native   (Adım 6)   — Rust lockfile parser, UDS shared volume
-#   postgres         (Adım 7)   — persistent storage backend
-#   mock-npm-registry (Adım 7)  — pre-seeded with malicious package fixtures
-#   backstage        (Adım 7)   — examples/app with plugins loaded
-#   slack-notifier   (Adım 7)   — webhook listener subscribed to /v1/stream
+#   engine            (Adım 2-3) — Go core, HTTP + SSE API. Runs in the
+#                                  DEFAULT profile. ParserStrategy defaults
+#                                  to "go" (the embedded Go parser) — no
+#                                  sidecar needed.
+#   rampart-native    (Adım 6)   — Rust lockfile parser, opt-in via
+#                                  `docker compose --profile native up`.
+#                                  Deploys as a defense-in-depth parser
+#                                  sandbox; see ADR-0005 Final Decision
+#                                  (docs/decisions/0005-no-cgo-rust-via-uds.md)
+#                                  for why this is opt-in, not default.
+#   postgres          (Adım 7)   — persistent storage backend
+#   mock-npm-registry (Adım 7)   — pre-seeded with malicious package fixtures
+#   backstage         (Adım 7)   — examples/app with plugins loaded
+#   slack-notifier    (Adım 7)   — webhook listener subscribed to /v1/stream
+#
+# Usage:
+#   docker compose up -d                       # engine only, strategy=go
+#   RAMPART_PARSER_STRATEGY=native \
+#     docker compose --profile native up -d    # engine + rampart-native, strategy=native
+#
+# When the `native` profile is enabled without the env override, the
+# engine boots in `strategy=go` and simply doesn't talk to the sidecar
+# even though it's running — that's a valid shape for isolation-only
+# adopters who want the sandbox available for future runtime flipping.
+# The engine's boot log always prints `requested=X effective=Y` so the
+# actual strategy is auditable in prod.
 
 services:
+  engine:
+    build:
+      context: ./engine
+      dockerfile: Dockerfile
+    image: rampart-engine:dev
+    environment:
+      # Strategy defaults to `go`. Set `RAMPART_PARSER_STRATEGY=native`
+      # in the shell (or a .env file) when running `--profile native`
+      # to flip the engine into sidecar mode. The native-socket path
+      # also has a sane container default that matches the shared
+      # volume below, so operators rarely need to override it.
+      RAMPART_PARSER_STRATEGY: ${RAMPART_PARSER_STRATEGY:-go}
+      RAMPART_NATIVE_SOCKET: /var/run/rampart/native.sock
+    volumes:
+      # Bind-mount the shared volume even when the native profile is
+      # disabled — the engine boots fine without the socket (falls
+      # back to `go` with a warn line, tested by
+      # TestEffectiveStrategy_FallsBackWhenNativeUnavailable), and
+      # keeping the mount here means flipping on the profile doesn't
+      # need a container restart with new volume bindings.
+      - native-sock:/var/run/rampart
+    ports:
+      - "8080:8080"
+
   rampart-native:
     build:
       context: ./native
@@ -24,27 +68,13 @@ services:
     # check will ship in Adım 7 as either a tiny statically-linked prober
     # binary co-installed in the image, or an out-of-container probe that
     # runs `socat UNIX-CONNECT:…native.sock` from the engine side. For
-    # Phase 1 we rely on the sidecar's sub-100 ms startup and compose
-    # ordering.
-
-  engine:
-    build:
-      context: ./engine
-      dockerfile: Dockerfile
-    image: rampart-engine:dev
-    profiles: ["native", "full"]
-    environment:
-      RAMPART_NATIVE_SOCKET: /var/run/rampart/native.sock
-    volumes:
-      - native-sock:/var/run/rampart
-    ports:
-      - "8080:8080"
-    depends_on:
-      rampart-native:
-        condition: service_started
+    # Phase 1 we rely on the sidecar's sub-100 ms startup and on the
+    # engine's EffectiveStrategy probe (2 s ping timeout + fallback to
+    # `go` on failure) to absorb any startup-order hiccup.
 
 volumes:
   # Shared tmpfs-style volume carrying only the UDS socket. Engine +
-  # native bind-mount it read-write; anything else in the stack is
-  # isolated from it.
+  # native bind-mount it read-write when both are running; when the
+  # native profile is disabled, the volume is still created but empty
+  # — harmless.
   native-sock:

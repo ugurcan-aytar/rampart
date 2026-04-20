@@ -203,6 +203,27 @@ a crossover, the honest action is to delete `rampart-native` from the
 default Docker Compose profile and keep it only as an opt-in for
 deployments that value the isolation properties above.
 
+## Final Decision
+
+Native Rust sidecar retained as opt-in via --profile native.
+
+### Rationale
+Throughput benchmark falsified the crossover hypothesis: Go parser wins 1.8× at 100k packages, binary envelope reduced gap 75% but no crossover emerged. For rampart's typical production workload (SBOM parse runs hourly, not on critical latency path), absolute parse time differences are operationally irrelevant — the true hot path is incident match / blast-radius query (Phase 2 bitmap index).
+
+The sidecar's real value is not throughput but parser isolation. Supply chain attackers may craft malicious lockfiles that trigger panics, OOMs, or pathological parse times in the embedded Go parser. In default deployment (embedded Go parser), such a payload would crash the engine. With --profile native enabled, parser lives in a separate process; a hostile lockfile can crash only the sidecar, after which the engine falls back to embedded Go or surfaces a parser-unavailable incident. This is defense-in-depth: the parser runs in a different process, different language runtime, different attack surface.
+
+### Deployment recommendations
+- Default Compose profile: embedded Go parser. Simpler operation, single binary, single runtime.
+- Opt-in via `--profile native`: recommended for deployments ingesting SBOMs from untrusted or third-party sources (e.g., scanning arbitrary public repos, accepting user-submitted lockfiles). Accepts operational complexity in exchange for parser sandboxing.
+
+### Phase 2 triggers
+- Phase 2 evaluates SCM_RIGHTS + binary response protocol. If throughput crossover emerges (likely at 100+ MB lockfiles), sidecar may become default. If not, sidecar remains opt-in as isolation feature.
+- If Phase 2 introduces the bitmap incident match as planned, SBOM parse latency becomes even less relevant — reinforces current default.
+- If parser sandboxing proves insufficient (e.g., kernel-level isolation needed for genuine supply chain hostile environments), Phase 3 evaluates container-per-parse (gVisor, Kata) or wasm-compiled parser.
+
+### Commit this lands in
+ad42026 (binary envelope measurement), 7 subsequent commit on main (opt-in profile + fallback + Final Decision section).
+
 ## Verification
 
 At Adım 6 close:

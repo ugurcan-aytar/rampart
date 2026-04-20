@@ -3,10 +3,16 @@ package npm
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
 )
+
+// nativeProbeTimeout caps the ping issued by EffectiveStrategy so the
+// engine's boot path can't hang waiting for an absent sidecar.
+const nativeProbeTimeout = 2 * time.Second
 
 // Strategy picks which parser implementation to use — the in-process
 // Go one that ships in this very package, or the Rust sidecar reached
@@ -54,6 +60,43 @@ func NewStrategyParser(s Strategy, goParser *Parser, nativeClient *native.Client
 // Strategy returns the currently-configured strategy.
 func (sp *StrategyParser) Strategy() Strategy {
 	return sp.strategy
+}
+
+// EffectiveStrategy resolves the strategy the engine boot path will
+// actually use. If the caller asked for StrategyNative but the Rust
+// sidecar is unreachable, we drop to StrategyGo with a warn log —
+// defense-in-depth is opt-in and should never prevent the engine
+// from answering requests. StrategyGo is returned unchanged (no probe).
+//
+// This helper is for the server boot path only. The `rampart
+// parse-sbom` / `rampart scan` CLIs keep their loud-failure
+// semantics: if an operator explicitly asks for `--parser native`
+// and the socket is missing, that should surface as an error, not
+// silently pick a different engine.
+func EffectiveStrategy(
+	ctx context.Context,
+	requested Strategy,
+	nativeClient *native.Client,
+	log *slog.Logger,
+) Strategy {
+	if requested != StrategyNative {
+		return requested
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	if nativeClient == nil {
+		log.Warn("parser.strategy=native requested but no native client wired; falling back to go")
+		return StrategyGo
+	}
+	probeCtx, cancel := context.WithTimeout(ctx, nativeProbeTimeout)
+	defer cancel()
+	if err := nativeClient.Ping(probeCtx); err != nil {
+		log.Warn("rampart-native unreachable; falling back to embedded Go parser",
+			"err", err)
+		return StrategyGo
+	}
+	return requested
 }
 
 // Parse hands the content to the chosen parser backend. Returns a
