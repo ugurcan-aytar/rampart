@@ -1,0 +1,28 @@
+app:
+  title: rampart demo
+  baseUrl: http://localhost:3000
+
+organization:
+  name: rampart demo
+
+backend:
+  baseUrl: http://localhost:7007
+  listen:
+    port: 7007
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+  cors:
+    origin: http://localhost:3000
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+
+# rampart-specific block — consumed by both plugin-rampart (frontend) and
+# plugin-rampart-backend (server-side proxy + catalog sync).
+rampart:
+  baseUrl: http://localhost:8080
+  catalogSyncInterval: 30m
+
+catalog:
+  rules:
+    - allow: [Component, API, System, Domain, Group, User, Resource]
+  locations: []

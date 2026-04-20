@@ -1,0 +1,12 @@
+{
+  "name": "rampart-example-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal Backstage example app wiring the three rampart plugins. Full app-shell lands in Adım 7.",
+  "license": "MIT",
+  "scripts": {
+    "typecheck": "echo 'typecheck: example app shell lands in Adım 7 (full Backstage install)'",
+    "lint": "echo 'lint: not yet configured'",
+    "test": "echo 'test: no tests yet'"
+  }
+}

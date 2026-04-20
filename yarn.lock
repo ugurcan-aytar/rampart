@@ -59,11 +59,75 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/node@npm:22.5.0":
+  version: 22.5.0
+  resolution: "@types/node@npm:22.5.0"
+  dependencies:
+    undici-types: "npm:~6.19.2"
+  checksum: 10c0/45aa75c5e71645fac42dced4eff7f197c3fdfff6e8a9fdacd0eb2e748ff21ee70ffb73982f068a58e8d73b2c088a63613142c125236cdcf3c072ea97eada1559
+  languageName: node
+  linkType: hard
+
+"@types/prop-types@npm:*":
+  version: 15.7.15
+  resolution: "@types/prop-types@npm:15.7.15"
+  checksum: 10c0/b59aad1ad19bf1733cf524fd4e618196c6c7690f48ee70a327eb450a42aab8e8a063fbe59ca0a5701aebe2d92d582292c0fb845ea57474f6a15f6994b0e260b2
+  languageName: node
+  linkType: hard
+
+"@types/react-dom@npm:18.3.0":
+  version: 18.3.0
+  resolution: "@types/react-dom@npm:18.3.0"
+  dependencies:
+    "@types/react": "npm:*"
+  checksum: 10c0/6c90d2ed72c5a0e440d2c75d99287e4b5df3e7b011838cdc03ae5cd518ab52164d86990e73246b9d812eaf02ec351d74e3b4f5bd325bf341e13bf980392fd53b
+  languageName: node
+  linkType: hard
+
+"@types/react@npm:*":
+  version: 19.2.14
+  resolution: "@types/react@npm:19.2.14"
+  dependencies:
+    csstype: "npm:^3.2.2"
+  checksum: 10c0/7d25bf41b57719452d86d2ac0570b659210402707313a36ee612666bf11275a1c69824f8c3ee1fdca077ccfe15452f6da8f1224529b917050eb2d861e52b59b7
+  languageName: node
+  linkType: hard
+
+"@types/react@npm:18.3.3":
+  version: 18.3.3
+  resolution: "@types/react@npm:18.3.3"
+  dependencies:
+    "@types/prop-types": "npm:*"
+    csstype: "npm:^3.0.2"
+  checksum: 10c0/fe455f805c5da13b89964c3d68060cebd43e73ec15001a68b34634604a78140e6fc202f3f61679b9d809dde6d7a7c2cb3ed51e0fd1462557911db09879b55114
+  languageName: node
+  linkType: hard
+
+"@ugurcan-aytar/backstage-plugin-rampart-backend@workspace:backstage/plugins/rampart-backend":
+  version: 0.0.0-use.local
+  resolution: "@ugurcan-aytar/backstage-plugin-rampart-backend@workspace:backstage/plugins/rampart-backend"
+  dependencies:
+    "@types/node": "npm:22.5.0"
+    typescript: "npm:5.6.3"
+  languageName: unknown
+  linkType: soft
+
 "@ugurcan-aytar/backstage-plugin-rampart@workspace:backstage/plugins/rampart":
   version: 0.0.0-use.local
   resolution: "@ugurcan-aytar/backstage-plugin-rampart@workspace:backstage/plugins/rampart"
   dependencies:
+    "@types/react": "npm:18.3.3"
+    "@types/react-dom": "npm:18.3.0"
     openapi-typescript: "npm:7.4.3"
+    typescript: "npm:5.6.3"
+  languageName: unknown
+  linkType: soft
+
+"@ugurcan-aytar/scaffolder-rampart-actions@workspace:backstage/plugins/scaffolder-rampart-actions":
+  version: 0.0.0-use.local
+  resolution: "@ugurcan-aytar/scaffolder-rampart-actions@workspace:backstage/plugins/scaffolder-rampart-actions"
+  dependencies:
+    "@types/node": "npm:22.5.0"
     typescript: "npm:5.6.3"
   languageName: unknown
   linkType: soft
@@ -116,6 +180,13 @@ __metadata:
   version: 1.4.0
   resolution: "colorette@npm:1.4.0"
   checksum: 10c0/4955c8f7daafca8ae7081d672e4bd89d553bd5782b5846d5a7e05effe93c2f15f7e9c0cb46f341b59f579a39fcf436241ff79594899d75d5f3460c03d607fe9e
+  languageName: node
+  linkType: hard
+
+"csstype@npm:^3.0.2, csstype@npm:^3.2.2":
+  version: 3.2.3
+  resolution: "csstype@npm:3.2.3"
+  checksum: 10c0/cd29c51e70fa822f1cecd8641a1445bed7063697469d35633b516e60fe8c1bde04b08f6c5b6022136bb669b64c63d4173af54864510fbb4ee23281801841a3ce
   languageName: node
   linkType: hard
 
@@ -246,6 +317,12 @@ __metadata:
   languageName: node
   linkType: hard
 
+"rampart-example-app@workspace:backstage/examples/app":
+  version: 0.0.0-use.local
+  resolution: "rampart-example-app@workspace:backstage/examples/app"
+  languageName: unknown
+  linkType: soft
+
 "rampart@workspace:.":
   version: 0.0.0-use.local
   resolution: "rampart@workspace:."
@@ -290,6 +367,13 @@ __metadata:
     tsc: bin/tsc
     tsserver: bin/tsserver
   checksum: 10c0/7c9d2e07c81226d60435939618c91ec2ff0b75fbfa106eec3430f0fcf93a584bc6c73176676f532d78c3594fe28a54b36eb40b3d75593071a7ec91301533ace7
+  languageName: node
+  linkType: hard
+
+"undici-types@npm:~6.19.2":
+  version: 6.19.8
+  resolution: "undici-types@npm:6.19.8"
+  checksum: 10c0/078afa5990fba110f6824823ace86073b4638f1d5112ee26e790155f481f2a868cc3e0615505b6f4282bdf74a3d8caad715fd809e870c2bb0704e3ea6082f344
   languageName: node
   linkType: hard
 

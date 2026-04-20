@@ -1,31 +1,27 @@
 {
-  "name": "@ugurcan-aytar/backstage-plugin-rampart",
+  "name": "@ugurcan-aytar/backstage-plugin-rampart-backend",
   "version": "0.1.0",
   "private": true,
-  "description": "rampart Backstage frontend plugin — incident dashboard, blast radius, SSE live stream.",
+  "description": "rampart Backstage backend plugin — proxies /api/rampart/* to the engine and runs catalog sync.",
   "license": "MIT",
   "author": "Uğurcan Aytar <aytarugurcan@gmail.com>",
   "repository": {
     "type": "git",
     "url": "https://github.com/ugurcan-aytar/rampart.git",
-    "directory": "backstage/plugins/rampart"
+    "directory": "backstage/plugins/rampart-backend"
   },
   "backstage": {
-    "role": "frontend-plugin"
+    "role": "backend-plugin"
   },
-  "sideEffects": false,
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
-    "gen:api": "openapi-typescript ../../../schemas/openapi.yaml -o src/api/gen/schema.ts",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'lint: not yet configured (Adım 7 — full Backstage toolchain install)'",
     "test": "echo 'test: no tests yet (Adım 7 — Jest + MSW setup)'"
   },
   "devDependencies": {
-    "@types/react": "18.3.3",
-    "@types/react-dom": "18.3.0",
-    "openapi-typescript": "7.4.3",
+    "@types/node": "22.5.0",
     "typescript": "5.6.3"
   }
 }

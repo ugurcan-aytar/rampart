@@ -1,0 +1,27 @@
+{
+  "name": "@ugurcan-aytar/scaffolder-rampart-actions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Backstage scaffolder actions for rampart remediations (pin-version, rotate-secret, open-pr).",
+  "license": "MIT",
+  "author": "Uğurcan Aytar <aytarugurcan@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ugurcan-aytar/rampart.git",
+    "directory": "backstage/plugins/scaffolder-rampart-actions"
+  },
+  "backstage": {
+    "role": "node-library"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'lint: not yet configured (Adım 7 — full Backstage toolchain install)'",
+    "test": "echo 'test: no tests yet (Adım 7 — Jest setup)'"
+  },
+  "devDependencies": {
+    "@types/node": "22.5.0",
+    "typescript": "5.6.3"
+  }
+}
