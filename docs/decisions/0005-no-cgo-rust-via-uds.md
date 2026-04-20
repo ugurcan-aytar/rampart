@@ -146,39 +146,62 @@ have the sidecar available.
    lists supported architectures); our arm64 Linux deploy target does
    not fall in the fast path.
 
-## Measured consequences (2026-04-20, Adım 6 close)
+## Measured consequences (2026-04-20, Adım 6 close, two wire revisions)
 
 Benchmarks across a 1 KiB → 15 MiB range (7 fixtures, 2 → 100 000
-packages; table in `docs/benchmarks/sbom-parser.md`):
+packages; full table in `docs/benchmarks/sbom-parser.md`).
 
-- **The sidecar does not cross over in the tested range.** Go wins at
+### First revision — JSON envelope (base64 request + JSON response)
+
+- **The sidecar did not cross over in the tested range.** Go won at
   every input size — from 8.7× on the 765-byte axios fixture down to
   3.1× on the 15 MiB, 100 000-package fixture.
-- **Native throughput plateaus at ~47 MB/s** past the small-fixture
-  regime. The bottleneck is not the Rust parser itself — it's the four
-  JSON/base64 boundaries in the wire protocol (Go base64 encode → UDS
-  → Rust base64 decode → serde_json parse → serde_json marshal of the
-  response → Go JSON unmarshal back into `domain.ParsedSBOM`). The
-  in-process Go path pays none of that.
-- **Phase 1's perf claim of "Rust wins on huge lockfiles" is
-  falsified.** That sentence is deleted from this ADR on purpose;
-  documentation the measurements contradict is worse than no claim.
+- **Native throughput plateaued at ~47 MB/s** past the small-fixture
+  regime. Bottleneck: four JSON/base64 boundaries in the protocol
+  (Go base64 encode → UDS → Rust base64 decode → serde_json parse →
+  serde_json marshal of response → Go JSON unmarshal).
 
-Three Phase-2 levers could change the picture — all need their own
-measurement rounds before any of them lands:
+### Second revision — binary request envelope (this ADR's current wire)
 
-1. Drop base64 + JSON on the response path (bincode / FlatBuffer /
-   Cap'n Proto over the same UDS framing).
-2. Connection pooling + request pipelining (amortise the ~50 µs UDS
-   handshake; helps small fixtures, not the 3× steady-state gap).
-3. Zero-copy `content` handoff via `SCM_RIGHTS` mmap — sidesteps the
-   input-side base64 round-trip entirely.
+Eliminated base64 + JSON-envelope on the request path. Kept JSON on
+the (small) response. Details in `schemas/native-ipc.md`.
 
-Until one of those lands, `parser.strategy: go` is **measurably the
-right default**. The sidecar stays because its non-performance wins
-(zero cgo in the Go build, independent release cadence,
-wire-debuggable protocol, process-level isolation from the engine's
-storage layer) still hold.
+- **Native throughput improved from ~47 MB/s to ~82 MB/s** (~75 %
+  gain) at steady state.
+- **Go/Native ratio at 100 k packages dropped from 3.1× to 1.8×.**
+- **Still no crossover.** Go holds ~150 MB/s; Native's new plateau
+  at ~82 MB/s is a real improvement but not enough.
+
+What's left as cost on the Native path: one UDS round-trip, plus the
+response-side marshal (Rust `serde_json::to_vec` of ParsedSBOM) and
+unmarshal (Go `encoding/json` into `domain.ParsedSBOM`). This
+pencils out to ~2 µs/package of extra work the in-process Go path
+never pays.
+
+### Phase-2 lever status
+
+| Lever | Status | Outcome |
+|---|---|---|
+| Binary wire envelope (this revision) | **Tested** | ~1.75× Native speed-up; still no crossover. |
+| Connection pooling / pipelining | **Not yet tested** | Amortises the ~50 µs UDS connect cost. Helps small fixtures where that cost is visible; irrelevant past ~1 KiB lockfiles. Not the lever that closes the 1.8× steady-state gap. |
+| `SCM_RIGHTS` + mmap handoff + binary response (FlatBuffers / bincode) | **Not yet tested** | The only remaining lever that could realistically close the gap — deletes both the response-JSON round-trip and the input copy. Two-day refactor minimum; deferred to Phase 2. |
+
+### Operational consequence
+
+`parser.strategy: go` remains **measurably the right default**. The
+sidecar stays because its non-performance properties still hold:
+
+- Zero cgo in the Go build (every rampart-supported target builds
+  with `CGO_ENABLED=0`).
+- Independent release cadence between engine and parser.
+- Wire-level debuggability (`strace` / `tcpdump` show request opcodes
+  + raw lockfile bytes + JSON SBOM — no protobuf decoders needed).
+- Process-level isolation from the engine's storage layer.
+
+If the remaining Phase-2 lever is measured and still doesn't produce
+a crossover, the honest action is to delete `rampart-native` from the
+default Docker Compose profile and keep it only as an opt-in for
+deployments that value the isolation properties above.
 
 ## Verification
 

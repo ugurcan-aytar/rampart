@@ -15,156 +15,156 @@ named-pipe support is Phase 2 (same ADR).
 
 ## Framing
 
-Every request / response is one **length-prefixed JSON frame**:
+Every request / response is **outer-length-prefixed + binary body**:
 
 ```
 ┌─────────────────────────┬─────────────────────────────────┐
-│ 4 bytes, big-endian u32 │ exactly that many bytes of JSON │
+│ 4 bytes, big-endian u32 │  N bytes of body                │
+│  = outer body length N  │  body always starts with 1-byte │
+│                         │  opcode, then opcode-specific   │
 └─────────────────────────┴─────────────────────────────────┘
 ```
 
-Hard cap per frame: **100 MiB** (enforced by the server — a bigger prefix
-is refused as `InvalidData`). This absorbs the 15 MiB `huge-100k-pkgs.json`
-benchmark fixture with order-of-magnitude headroom for the larger
-synthetic fixtures Adım 8 CI may generate.
+Hard cap per frame: **100 MiB** (enforced by both sides — a bigger
+prefix is rejected). This absorbs the largest synthetic benchmark
+fixture (100 000 packages → ~15 MiB, see `docs/benchmarks/sbom-parser.md`)
+with order-of-magnitude headroom for real-world enterprise monorepos.
 
-A single TCP connection can carry many frames back-to-back. The server
-handles each request in turn; the client currently opens one connection
-per `ParseNPMLockfile` call and closes after reading the response
-(connection pooling is Phase 2 once we have measured reconnect cost).
+A single connection can carry many frames back-to-back. The server
+enforces a **30-second per-frame read timeout** once a frame has
+started — idle connections between frames are unbounded, but a frame
+that stalls mid-body gets the connection dropped (slowloris defence).
 
-## Request types
+The Go client opens one connection per `ParseNPMLockfile` call and
+closes after reading the response. Pooling is Phase 2 once we've
+measured the reconnect cost.
 
-Every request carries `id` (correlation — echoed back on the response)
-and `type` (discriminator). Payload shape is `type`-specific.
+### Why binary on requests, JSON on responses
 
-### `ping`
+Adım 6's first wire revision base64-encoded the lockfile into a JSON
+envelope (`{ "content": "<base64>" }`). The benchmark at close showed
+the envelope — not the Rust parser — dominating the round-trip. The
+second revision (this document) made the **request** path fully binary
+(raw lockfile bytes, no base64, no JSON escape) and kept the
+**response** JSON (the SBOM is orders of magnitude smaller than a
+large lockfile, JSON keeps `strace` / `tcpdump` output readable).
+Measurement closed ~half of the remaining gap — details in
+`docs/benchmarks/sbom-parser.md`.
 
-```json
-{"id": "r-any", "type": "ping"}
+## Request opcodes (client → server)
+
+Every body's first byte is the opcode.
+
+### `0x01` — parse_npm_lockfile
+
+```
+┌───────────┬────────────────────────┬─────────────────────────┬─────────────────────────┬──────────────────────────┐
+│ opcode    │ 4-byte BE content_len  │ content_len raw bytes   │ 4-byte BE metadata_len  │ metadata_len raw bytes   │
+│ = 0x01    │                        │ (the lockfile body)     │                         │ (reserved — Phase 1: 0)  │
+└───────────┴────────────────────────┴─────────────────────────┴─────────────────────────┴──────────────────────────┘
 ```
 
-Health probe. Response:
+`content` is the **raw** `package-lock.json` bytes — no base64, no
+JSON escape. `metadata` is reserved: Phase 1 callers send 0 bytes,
+the server ignores any payload. Phase 2 may use this as a JSON
+options blob (e.g. `{ "skip_integrity_check": true }`) without a
+wire revision.
 
-```json
-{"id": "r-any", "type": "pong", "payload": {}}
+### `0xFF` — ping
+
+```
+┌───────────┐
+│ 0xFF      │
+└───────────┘
 ```
 
-Used by the Go client's `Ping` method (and, in Adım 7, by a dedicated
-prober binary — distroless containers have no shell, so the compose
-healthcheck can't speak the protocol directly).
+Body is just the opcode byte (outer length = 1). Used by the Go
+client's `Ping` method and, in Adım 7, by a dedicated prober binary
+(distroless containers have no shell, so the compose healthcheck
+can't open a UDS connection itself).
 
-### `parse_npm_lockfile`
+## Response opcodes (server → client)
+
+### `0x02` — parse_result
+
+```
+┌───────────┬────────────────────────┬─────────────────────────┐
+│ opcode    │ 4-byte BE sbom_len     │ sbom_len bytes of JSON  │
+│ = 0x02    │                        │ = ParsedSBOM            │
+└───────────┴────────────────────────┴─────────────────────────┘
+```
+
+The inner JSON is `domain.ParsedSBOM` as serialised by Go's default
+`encoding/json` — Pascal-cased field names, `null` for empty `Scope`.
+Example (whitespace added for readability):
 
 ```json
 {
-  "id": "req-abc123",
-  "type": "parse_npm_lockfile",
-  "payload": {
-    "content": "<base64 of package-lock.json bytes>"
-  }
-}
-```
-
-`content` is **base64**-encoded lockfile bytes so the wire remains bare
-JSON regardless of the lockfile's own UTF-8 content. **No other fields.**
-
-ADR-0005 makes the parser pure: identity (`id`, `generated_at`,
-`component_ref`, `commit_sha`) is stamped by the engine's ingestion
-layer — see `engine/ingestion`. The earlier revision of this payload
-carried those fields and the parity test normalised them out; the new
-shape lets Go and Rust outputs diff byte-for-byte with zero shims.
-
-Success response:
-
-```json
-{
-  "id": "req-abc123",
-  "type": "parse_result",
-  "payload": {
-    "parsed_sbom": {
+  "Ecosystem": "npm",
+  "Packages": [
+    {
       "Ecosystem": "npm",
-      "Packages": [
-        {
-          "Ecosystem": "npm",
-          "Name": "axios",
-          "Version": "1.11.0",
-          "PURL": "pkg:npm/axios@1.11.0",
-          "Scope": null,
-          "Integrity": "sha512-..."
-        }
-      ],
-      "SourceFormat": "npm-package-lock-v3",
-      "SourceBytes": 765
-    },
-    "stats": {
-      "parse_ms": 12,
-      "package_count": 1,
-      "bytes_read": 765
+      "Name": "axios",
+      "Version": "1.11.0",
+      "PURL": "pkg:npm/axios@1.11.0",
+      "Scope": null,
+      "Integrity": "sha512-..."
     }
-  }
+  ],
+  "SourceFormat": "npm-package-lock-v3",
+  "SourceBytes": 765
 }
 ```
 
-The `parsed_sbom` shape matches `engine/internal/domain.ParsedSBOM` as
-serialised by Go's default `encoding/json` — Pascal-cased field names,
-no rename tags, `null` for empty `Scope` — so Go and Rust outputs are
-byte-identical out of the parser.
+### `0x03` — error
 
-### `shutdown`
-
-```json
-{"id": "r-any", "type": "shutdown"}
 ```
-
-Reserved for the test harness. Server acknowledges with `shutdown_ack`;
-the process continues running (SIGTERM is the real stop signal). Kept
-so tests can verify the server round-trips unknown-but-documented
-requests without surprises.
-
-## Error responses
-
-Any failure returns:
-
-```json
-{
-  "id": "req-abc123",
-  "type": "error",
-  "error": {
-    "code": "UNSUPPORTED_LOCKFILE_VERSION",
-    "message": "unsupported lockfile version: got 2, expected 3"
-  }
-}
+┌───────────┬─────────────────────┬──────────────────┬────────────────────────┬──────────────────┐
+│ opcode    │ 4-byte BE code_len  │ code_len bytes   │ 4-byte BE message_len  │ message_len bytes│
+│ = 0x03    │                     │ (ASCII error id) │                        │ (UTF-8 message)  │
+└───────────┴─────────────────────┴──────────────────┴────────────────────────┴──────────────────┘
 ```
 
 Error codes the server emits:
 
 | Code                          | Cause                                                  |
 |-------------------------------|--------------------------------------------------------|
-| `MALFORMED_REQUEST`           | JSON decode failed or missing `payload`                |
-| `UNKNOWN_REQUEST`             | `type` not one of the three above                      |
-| `INVALID_BASE64`              | `payload.content` is not decodable base64              |
-| `MALFORMED_LOCKFILE`          | package-lock.json JSON parse failed                    |
+| `MALFORMED_REQUEST`           | decode_request_body failed (unknown opcode, truncated, trailing bytes, or empty body) |
+| `MALFORMED_LOCKFILE`          | `package-lock.json` JSON parse failed                  |
 | `UNSUPPORTED_LOCKFILE_VERSION`| `lockfileVersion` missing or ≠ 3 (v1 / v2 land here)   |
 | `EMPTY_LOCKFILE`              | `packages` key absent from the lockfile                |
+| `INTERNAL_ERROR`              | response JSON marshal failed (should never happen)     |
 
-These names mirror the Go side's sentinel errors (`ErrMalformedLockfile`,
-`ErrUnsupportedLockfileVersion`, `ErrEmptyLockfile`) so callers can
-switch on `code` regardless of which parser produced the result.
+These names mirror the Go side's sentinel errors
+(`ErrMalformedLockfile`, `ErrUnsupportedLockfileVersion`,
+`ErrEmptyLockfile`) so callers can switch on `code` regardless of
+which parser produced the result.
+
+### `0xFE` — pong
+
+```
+┌───────────┐
+│ 0xFE      │
+└───────────┘
+```
+
+Body is just the opcode byte (outer length = 1).
 
 ## Versioning
 
-`info.version` on the wire is today `"0.1.0"` (tracked implicitly by the
-crate version). This is the first tagged shape; a later breaking change
-to the payload bumps the minor version and adds a `version_required`
-field to `ping` responses so older clients can refuse gracefully —
-deferred to Phase 2.
+The shape above is v1. The first implementation shipped in Adım 6 used
+a JSON-envelope request (base64 content + JSON metadata) and is
+**not** wire-compatible with v1 — callers must upgrade in lockstep.
+A future breaking change will add an explicit version handshake (a
+`0x00 hello` opcode returning `{"version":"v2"}`) so older clients
+can refuse gracefully.
 
 ## Why not protobuf / gRPC
 
-Discussed and rejected in ADR-0005: JSON on the wire is readable in
-`tcpdump` / `strace`, needs no generator in either language, and
-performance sits comfortably below the parse cost on every lockfile
-we've measured (see `docs/benchmarks/sbom-parser.md`). Revisiting is a
-Phase 3 option if the proto overhead ever stops being dominated by
-lockfile parsing.
+Discussed and rejected in ADR-0005 at the decision point, and
+reinforced by measurement: the request path's binary framing is
+trivial to read (four fixed-width length prefixes + raw bytes) and
+needs no generator in either language. The response's JSON is small
+and human-readable in `strace` / `tcpdump`. A protobuf schema would
+add generator toolchains to both sides with no measured win.
+Revisiting is a Phase 3 option if later measurements change.

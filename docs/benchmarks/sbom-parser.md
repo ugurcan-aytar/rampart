@@ -1,9 +1,11 @@
 # SBOM parser benchmark — Go in-process vs. Rust via UDS
 
 Context: ADR-0005 argues the Rust sidecar pays for itself on large
-lockfiles. This page holds the measurements that tell the real story.
-The honest verdict lives at the bottom — and it's not the one the ADR
-assumed at Phase 1 start.
+lockfiles. This page holds two measurement rounds against seven
+fixtures — the first (JSON envelope) refuted the perf claim; the
+second (binary envelope) closed about half of the gap but the Rust
+path still loses on every size. The honest verdict lives at the
+bottom.
 
 ## Methodology
 
@@ -30,82 +32,81 @@ from `go run ./cmd/gen-lockfile-fixture -packages N -output …` inside
 `engine/` — deterministic for a fixed seed (42), not committed (sizes
 grow into tens of MiB; see `.gitignore`).
 
-## Results (2026-04-20, full 6-fixture sweep)
+## Results — 7 fixtures × 3 parsers
 
-| Fixture                     |       Size | Packages |    Go ns/op |    Go MB/s | Native ns/op | Native MB/s | Winner |
-|-----------------------------|-----------:|---------:|------------:|-----------:|-------------:|------------:|:-------|
-| `axios-compromise.json`     |      765 B |        2 |       4 393 |    174 MB/s|       38 262 |    20 MB/s  | **Go 8.7×** |
-| `simple-webapp.json`        |    2 045 B |       ~6 |      11 320 |    180 MB/s|       55 714 |    37 MB/s  | **Go 4.9×** |
-| `with-scoped.json`          |      828 B |        3 |       4 683 |    177 MB/s|       40 851 |    20 MB/s  | **Go 8.7×** |
-| `medium-200-pkgs.json`      |     32 KiB |      200 |     185 537 |    176 MB/s|      711 885 |    46 MB/s  | **Go 3.8×** |
-| `medium-2k-pkgs.json`       |    317 KiB |    2 000 |   2 068 289 |    157 MB/s|    6 508 414 |    50 MB/s  | **Go 3.1×** |
-| `large-20k-pkgs.json`       |    3.1 MiB |   20 000 |  21 374 802 |    152 MB/s|   67 867 609 |    48 MB/s  | **Go 3.2×** |
-| `huge-100k-pkgs.json`       |     15 MiB |  100 000 | 109 453 131 |    148 MB/s|  342 840 444 |    47 MB/s  | **Go 3.1×** |
+Both "Native" columns run against the same Rust parser and same
+lockfile input; only the wire envelope differs.
+
+- **Native-JSON** (Adım 6 refactor, previous column):
+  `{ "content": "<base64>" }` request body, response
+  `{ "parsed_sbom": {…}, "stats": {…} }`.
+- **Native-Binary** (Adım 6 post-refactor, current column): raw
+  lockfile bytes on the request (no base64, no JSON envelope — see
+  `schemas/native-ipc.md`), response still JSON (ParsedSBOM only).
+
+| Fixture                     |       Size |   Pkgs | Go ns/op | Go MB/s | Native-JSON ns/op | Native-JSON MB/s | Native-Binary ns/op | Native-Binary MB/s | Go vs. Native-Binary |
+|-----------------------------|-----------:|-------:|---------:|--------:|------------------:|-----------------:|--------------------:|-------------------:|:---------------------|
+| `axios-compromise.json`     |      765 B |      2 |    4 351 |     176 |            38 262 |               20 |              29 133 |                 26 | **Go 6.7×**          |
+| `with-scoped.json`          |      828 B |      3 |    4 679 |     177 |            40 851 |               20 |              31 393 |                 26 | **Go 6.7×**          |
+| `simple-webapp.json`        |    2 045 B |      6 |   11 364 |     180 |            55 714 |               37 |              40 070 |                 51 | **Go 3.5×**          |
+| `medium-200-pkgs.json`      |     32 KiB |    200 |  186 785 |     174 |           711 885 |               46 |             407 348 |                 80 | **Go 2.2×**          |
+| `medium-2k-pkgs.json`       |    317 KiB |  2 000 |  2.03 ms |     160 |           6.51 ms |               50 |             3.83 ms |                 85 | **Go 1.9×**          |
+| `large-20k-pkgs.json`       |    3.1 MiB | 20 000 | 20.94 ms |     155 |          67.87 ms |               48 |            38.92 ms |                 83 | **Go 1.9×**          |
+| `huge-100k-pkgs.json`       |     15 MiB |100 000 |  110 ms  |     148 |            343 ms |               47 |              199 ms |                 81 | **Go 1.8×**          |
 
 (`-benchtime=2s`, tight ±5 % across re-runs; full output is
 reproducible by re-running the command above.)
 
-Allocations per call tell the same story:
+Normalised per package (steady-state, 100 k fixture):
 
-| Fixture                 | Go B/op  | Native B/op | Go allocs/op | Native allocs/op |
-|-------------------------|---------:|------------:|-------------:|-----------------:|
-| `medium-2k-pkgs.json`   |  1.7 MiB |     3.7 MiB |       16 052 |           11 191 |
-| `large-20k-pkgs.json`   |   15 MiB |      42 MiB |      160 171 |          111 363 |
-| `huge-100k-pkgs.json`   |   67 MiB |     212 MiB |      800 560 |          555 960 |
+| Path           | Packages / sec |
+|----------------|---------------:|
+| Go in-process  |    ~911 k      |
+| Native-JSON    |    ~292 k      |
+| Native-Binary  |    ~502 k      |
 
-Rust's allocation **count** is lower (fewer objects), but the Rust
-call's total **bytes** are ~3× higher because the wire envelope
-materialises the whole `ParsedSBOM` as JSON inside the response
-payload and the Go client has to decode it back into a domain struct.
+## What the binary envelope changed
 
-## What the numbers mean
+- Native steady-state throughput moved from ~47 MB/s → ~82 MB/s
+  (~75% improvement).
+- Go/Native ratio at 100 k packages dropped from **3.1× → 1.8×**.
+- Native per-package rate moved from ~300 k pkg/s → ~500 k pkg/s.
 
-Two constants fall out of the table:
+Where the gain came from: the JSON wire paid for (a) base64 encoding
+on the Go client, (b) base64 decoding on the Rust server, and (c)
+JSON parse of the outer envelope on both sides. The binary wire
+deletes all three. What's left as cost: the `serde_json::to_vec`
+marshal of the `ParsedSBOM` on the Rust side, the `json.Unmarshal`
+on the Go side, one UDS round-trip, and the raw parse.
 
-1. **Go holds ~150 MB/s** across every size — its stdlib `encoding/json`
-   runs at a steady throughput with predictable per-package allocation.
-2. **Native plateaus at ~47 MB/s** past the small-fixture regime —
-   not a bug in the Rust parser, but the cost of the whole IPC round
-   trip: `base64` encode on the Go client, `base64` decode on the
-   Rust server, serde_json unmarshal of the lockfile, serde_json
-   marshal of the response envelope, and a Go `encoding/json` unmarshal
-   of that envelope back into `domain.ParsedSBOM`. Four JSON/base64
-   boundaries the in-process Go path doesn't pay.
+Why Native-Binary **still** loses by ~1.8× at steady state: Go's
+`encoding/json` runs in-process with no handoff; the Native path
+still pays a full response-JSON marshal + unmarshal round-trip.
+Each ~910 k pkg/s vs. ~500 k pkg/s gap pencils out to roughly
+`~2 µs / package` of extra cost in the Native path — which is
+exactly the cost of materialising each package twice (once into
+Rust's `PackageVersion`, once out via `serde_json`, once into Go's
+`domain.PackageVersion` via `encoding/json`).
 
-Normalised per package:
-
-- Go processes ~950 k packages / sec (steady)
-- Native processes ~300 k packages / sec (steady)
-
-The Rust parser itself is almost certainly faster than Go's `encoding/json`
-(measured in isolation, `serde_json` typically wins); we can't see that
-win here because it's swamped by the round-trip cost.
-
-## Verdict
+## Verdict — after two wire revisions
 
 **The Rust sidecar does not cross over within the tested range
-(1 KiB → 15 MiB lockfiles, 2 → 100 000 packages).** The Go in-process
-parser wins by a factor of **3–9× at every size we measured**. Claiming
-otherwise on a portfolio page would be dishonest.
+(1 KiB → 15 MiB lockfiles, 2 → 100 000 packages), even after the
+binary-envelope refactor.** Go wins 6.7× on small fixtures and 1.8×
+on the 100 000-package fixture. Improvement from the JSON envelope
+is real (Native throughput up 75 %) but insufficient.
 
-That's the Phase-1 baseline. Three Phase-2 levers exist to change the
-picture:
+Two of ADR-0005's three Phase-2 levers are now tested or ruled out:
 
-1. **Drop the base64 + JSON envelope on the response.** Stream the
-   `ParsedSBOM` as a length-prefixed binary (FlatBuffer, Cap'n Proto,
-   or bincode over UDS) so Rust → Go doesn't re-enter JSON on the hot
-   path. Expected gain: ~2× (rough, from the allocation table).
-2. **Connection pooling + request pipelining.** Amortise the ~50 µs
-   fixed UDS handshake across many lockfiles per connection. Helps
-   small-fixture throughput but not the 3× steady-state gap.
-3. **Zero-copy `content` handoff.** Memory-map the lockfile and pass
-   a fd over `SCM_RIGHTS` instead of base64. Closes the input side of
-   the four-transition cost.
+| Lever | Status | Outcome |
+|---|---|---|
+| Binary wire envelope (this change) | **Tested** | ~1.75× Native speed-up; still no crossover. |
+| Connection pooling / pipelining | **Not yet tested** | Would amortise UDS connect cost (dominates small fixtures; irrelevant past 1 KiB). Estimated gain: marginal at steady state. |
+| `SCM_RIGHTS` + mmap-based content handoff | **Not yet tested** | Kills the remaining response-JSON cost ONLY if paired with a binary response envelope (FlatBuffers, bincode). Two-day refactor at minimum. |
 
-None of these are Phase 1 work; they all need measurements of their
-own. Until one of them lands, the ADR-0005 default of
-`parser.strategy: go` is measurably correct at every input size this
-benchmark covers.
+Until one of the remaining levers lands — and measures a genuine
+crossover — the ADR-0005 default of `parser.strategy: go` remains
+measurably correct at every input size this benchmark covers.
 
 ## Operational takeaway
 
@@ -114,30 +115,21 @@ operator pick per deployment:
 
 - **`go` (default)** — the right answer for every workload this
   benchmark exercises.
-- **`native`** — the right answer when Phase 2 lands one of the
-  levers above, OR when the sidecar's isolation properties (separate
-  process, separate FS mount, no shared memory with the engine's
-  storage layer) are worth the 3× parse-cost tax. Note ADR-0005's
-  security narrative: a compromised parser doesn't get read access
-  to the engine's data.
-
-The sidecar is not a performance win at Phase 1. It **is** a
-compile-time architectural win (no cgo, independent release cadence,
-wire-level debuggability) and a runtime isolation win. The rest is
-future measurements.
+- **`native`** — the right answer when the sidecar's non-performance
+  properties (separate process, separate FS mount, zero cgo in the Go
+  build, independent release cadence, wire-level debuggability of the
+  protocol) are worth paying a 1.8× parse-cost tax for. That's the
+  honest portfolio value of `rampart-native` at Phase 1 close.
 
 ## Reproducing
 
 ```bash
-# From the repo root:
-cd engine && go run ./cmd/gen-lockfile-fixture \
-    -packages 200   -output testdata/lockfiles/medium-200-pkgs.json
-go run ./cmd/gen-lockfile-fixture \
-    -packages 2000  -output testdata/lockfiles/medium-2k-pkgs.json
-go run ./cmd/gen-lockfile-fixture \
-    -packages 20000 -output testdata/lockfiles/large-20k-pkgs.json
-go run ./cmd/gen-lockfile-fixture \
-    -packages 100000 -output testdata/lockfiles/huge-100k-pkgs.json
+# From engine/ (fixtures are deterministic for seed=42):
+cd engine
+go run ./cmd/gen-lockfile-fixture -packages 200    -output testdata/lockfiles/medium-200-pkgs.json
+go run ./cmd/gen-lockfile-fixture -packages 2000   -output testdata/lockfiles/medium-2k-pkgs.json
+go run ./cmd/gen-lockfile-fixture -packages 20000  -output testdata/lockfiles/large-20k-pkgs.json
+go run ./cmd/gen-lockfile-fixture -packages 100000 -output testdata/lockfiles/huge-100k-pkgs.json
 cd ..
 
 cd native && cargo build --release && cd ..

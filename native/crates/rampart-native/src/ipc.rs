@@ -1,45 +1,41 @@
-//! UDS (Unix Domain Socket) server.
+//! UDS (Unix Domain Socket) server — binary-framed transport.
 //!
 //! Phase 1 is intentionally simple:
 //!   - Single-threaded tokio runtime (workspace Cargo.toml picks only `rt`,
 //!     not `rt-multi-thread`). Ref:
 //!     https://docs.rs/tokio/latest/tokio/runtime/struct.Builder.html#method.new_current_thread
 //!   - One task per accepted connection.
-//!   - Framing: 4-byte big-endian u32 length prefix + JSON body.
-//!   - Three request kinds: `parse_npm_lockfile`, `ping`, `shutdown`.
+//!   - Framing: 4-byte BE outer length + binary body, body opens with a
+//!     1-byte opcode. See `protocol.rs`.
+//!   - Two request kinds: `parse_npm_lockfile`, `ping`.
 //!
 //! Platform scope: Unix only (`tokio::net::UnixListener` requires `cfg(unix)`
 //! per https://docs.rs/tokio/latest/tokio/net/struct.UnixListener.html).
 //! Windows named-pipe support is Phase 2 — see ADR-0005.
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use base64::prelude::*;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use crate::parser::parse;
-use crate::protocol::{ParseResult, ParseStats, Request, RequestPayload, Response, ResponseError};
+use crate::parser::{parse, ParseError};
+use crate::protocol::{
+    decode_request_body, encode_error, encode_parse_result, encode_pong, Request, MAX_FRAME_BYTES,
+};
 
-/// Maximum request frame size the server accepts: 100 MiB. A huge
-/// package-lock.json is ~50 MiB (FIRST.md benchmark fixture), so 100 MiB
-/// leaves a safety margin and hard-caps the cost of a malformed length
-/// prefix.
-const MAX_FRAME_BYTES: u32 = 100 * 1024 * 1024;
+/// Guard against slowloris-style hangs: once a frame has started, it
+/// must finish within this window or the connection is dropped. We
+/// do NOT apply this to the first read (idle connection waiting for
+/// a new request is legitimate).
+const FRAME_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Bind the UDS listener at `path` and run until the caller drops
 /// `shutdown`. Removes any stale socket file before binding.
-///
-/// Returns a tuple of `(listener, shutdown_tx)` — caller drops or sends
-/// on `shutdown_tx` to stop accepting new connections. Returns the path
-/// actually bound so the caller (or tests) can display it.
 pub async fn serve(socket_path: impl AsRef<Path>) -> Result<ServerHandle, std::io::Error> {
     let path: PathBuf = socket_path.as_ref().to_path_buf();
-    // Clean up stale socket from a prior crash — bind would otherwise
-    // fail with EADDRINUSE.
     match std::fs::remove_file(&path) {
         Ok(_) => debug!(?path, "removed stale socket"),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -50,7 +46,7 @@ pub async fn serve(socket_path: impl AsRef<Path>) -> Result<ServerHandle, std::i
     info!(
         ?path,
         max_frame_bytes = MAX_FRAME_BYTES,
-        "rampart-native listening on UDS"
+        "rampart-native listening on UDS (binary envelope)"
     );
 
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -75,7 +71,6 @@ pub async fn serve(socket_path: impl AsRef<Path>) -> Result<ServerHandle, std::i
                 }
             }
         }
-        // Best-effort cleanup on shutdown so we don't leave a socket file behind.
         let _ = std::fs::remove_file(&accept_path);
     });
 
@@ -113,8 +108,6 @@ impl Drop for ServerHandle {
     }
 }
 
-/// Per-connection driver loop. Reads length-prefixed JSON requests until
-/// the client half-closes or we hit a fatal framing error.
 async fn handle_connection(mut stream: UnixStream) {
     loop {
         match read_frame(&mut stream).await {
@@ -122,10 +115,14 @@ async fn handle_connection(mut stream: UnixStream) {
                 debug!("client closed connection");
                 return;
             }
-            Ok(Some(bytes)) => {
-                let resp_bytes = handle_request(&bytes);
-                if let Err(e) = write_frame(&mut stream, &resp_bytes).await {
+            Ok(Some(body)) => {
+                let resp = handle_body(&body);
+                if let Err(e) = stream.write_all(&resp).await {
                     warn!(error = %e, "write failed; closing connection");
+                    return;
+                }
+                if let Err(e) = stream.flush().await {
+                    warn!(error = %e, "flush failed; closing connection");
                     return;
                 }
             }
@@ -137,7 +134,12 @@ async fn handle_connection(mut stream: UnixStream) {
     }
 }
 
+/// Read one frame body. Returns `Ok(None)` on clean client close,
+/// `Err` on protocol violation or timeout.
 async fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, std::io::Error> {
+    // Waiting for the NEXT frame is legitimate — no timeout here.
+    // A tokio read_exact resolves to UnexpectedEof when the client
+    // closes before any bytes arrive; that's the clean-close signal.
     let mut len_buf = [0u8; 4];
     match stream.read_exact(&mut len_buf).await {
         Ok(_) => {}
@@ -145,139 +147,75 @@ async fn read_frame(stream: &mut UnixStream) -> Result<Option<Vec<u8>>, std::io:
         Err(e) => return Err(e),
     }
     let len = u32::from_be_bytes(len_buf);
-    if len > MAX_FRAME_BYTES {
+    if len == 0 || len > MAX_FRAME_BYTES {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            format!("frame size {len} exceeds MAX_FRAME_BYTES ({MAX_FRAME_BYTES})"),
+            format!("frame length {len} out of range [1, {MAX_FRAME_BYTES}]"),
         ));
     }
+    // Within a frame: bound the read time so a trickling client can't
+    // hold the server task forever.
     let mut body = vec![0u8; len as usize];
-    stream.read_exact(&mut body).await?;
+    read_exact_with_timeout(stream, &mut body).await?;
     Ok(Some(body))
 }
 
-async fn write_frame(stream: &mut UnixStream, body: &[u8]) -> Result<(), std::io::Error> {
-    let len = body.len();
-    if len > MAX_FRAME_BYTES as usize {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "response exceeds MAX_FRAME_BYTES",
-        ));
+async fn read_exact_with_timeout(
+    stream: &mut UnixStream,
+    buf: &mut [u8],
+) -> Result<(), std::io::Error> {
+    match tokio::time::timeout(FRAME_READ_TIMEOUT, stream.read_exact(buf)).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "frame body read timed out",
+        )),
     }
-    let len_buf = (len as u32).to_be_bytes();
-    stream.write_all(&len_buf).await?;
-    stream.write_all(body).await?;
-    stream.flush().await?;
-    Ok(())
 }
 
-fn handle_request(bytes: &[u8]) -> Vec<u8> {
-    let req: Request = match serde_json::from_slice(bytes) {
+fn handle_body(body: &[u8]) -> Vec<u8> {
+    let req = match decode_request_body(body) {
         Ok(r) => r,
         Err(e) => {
-            let resp = Response {
-                id: "unknown".to_string(),
-                kind: "error".to_string(),
-                payload: None,
-                error: Some(ResponseError {
-                    code: "MALFORMED_REQUEST".to_string(),
-                    message: format!("request JSON decode failed: {e}"),
-                }),
-            };
-            return serde_json::to_vec(&resp).unwrap_or_default();
+            return encode_error("MALFORMED_REQUEST", &format!("request decode failed: {e}"));
         }
     };
-    let resp = match req.kind.as_str() {
-        "ping" => Response {
-            id: req.id,
-            kind: "pong".to_string(),
-            payload: Some(serde_json::json!({})),
-            error: None,
-        },
-        "shutdown" => {
-            // Server stays up by default; shutdown is handled at the
-            // process level (SIGTERM). Acknowledge politely so the
-            // client never gets stuck.
-            Response {
-                id: req.id,
-                kind: "shutdown_ack".to_string(),
-                payload: Some(serde_json::json!({})),
-                error: None,
-            }
-        }
-        "parse_npm_lockfile" => handle_parse_npm(req),
-        other => Response {
-            id: req.id,
-            kind: "error".to_string(),
-            payload: None,
-            error: Some(ResponseError {
-                code: "UNKNOWN_REQUEST".to_string(),
-                message: format!("unknown request type `{other}`"),
-            }),
-        },
-    };
-    serde_json::to_vec(&resp).unwrap_or_default()
+    match req {
+        Request::Ping => encode_pong(),
+        Request::Parse {
+            content,
+            reserved_metadata: _,
+        } => handle_parse(&content),
+    }
 }
 
-fn handle_parse_npm(req: Request) -> Response {
-    let Some(RequestPayload::ParseNpmLockfile(p)) = req.payload else {
-        return Response {
-            id: req.id,
-            kind: "error".to_string(),
-            payload: None,
-            error: Some(ResponseError {
-                code: "MALFORMED_REQUEST".to_string(),
-                message: "parse_npm_lockfile requires `payload.content`".to_string(),
-            }),
-        };
-    };
-    let content_bytes = match BASE64_STANDARD.decode(p.content.as_bytes()) {
-        Ok(b) => b,
-        Err(e) => {
-            return Response {
-                id: req.id,
-                kind: "error".to_string(),
-                payload: None,
-                error: Some(ResponseError {
-                    code: "INVALID_BASE64".to_string(),
-                    message: format!("payload.content is not valid base64: {e}"),
-                }),
-            };
-        }
-    };
+fn handle_parse(content: &[u8]) -> Vec<u8> {
     let start = Instant::now();
-    match parse(&content_bytes) {
+    match parse(content) {
         Ok(parsed_sbom) => {
             let elapsed = start.elapsed();
-            let stats = ParseStats {
-                parse_ms: elapsed.as_millis() as u64,
-                package_count: parsed_sbom.packages.len(),
-                bytes_read: content_bytes.len(),
+            debug!(
+                parse_ms = elapsed.as_millis() as u64,
+                package_count = parsed_sbom.packages.len(),
+                bytes_read = content.len(),
+                "parse_npm_lockfile ok"
+            );
+            let json = match serde_json::to_vec(&parsed_sbom) {
+                Ok(b) => b,
+                Err(e) => {
+                    return encode_error("INTERNAL_ERROR", &format!("sbom marshal failed: {e}"));
+                }
             };
-            let result = ParseResult { parsed_sbom, stats };
-            let payload = serde_json::to_value(&result).unwrap_or_default();
-            Response {
-                id: req.id,
-                kind: "parse_result".to_string(),
-                payload: Some(payload),
-                error: None,
-            }
+            encode_parse_result(&json)
         }
         Err(e) => {
             let code = match &e {
-                crate::parser::ParseError::Malformed(_) => "MALFORMED_LOCKFILE",
-                crate::parser::ParseError::UnsupportedVersion(_) => "UNSUPPORTED_LOCKFILE_VERSION",
-                crate::parser::ParseError::Empty => "EMPTY_LOCKFILE",
+                ParseError::Malformed(_) => "MALFORMED_LOCKFILE",
+                ParseError::UnsupportedVersion(_) => "UNSUPPORTED_LOCKFILE_VERSION",
+                ParseError::Empty => "EMPTY_LOCKFILE",
             };
-            Response {
-                id: req.id,
-                kind: "error".to_string(),
-                payload: None,
-                error: Some(ResponseError {
-                    code: code.to_string(),
-                    message: e.to_string(),
-                }),
-            }
+            encode_error(code, &e.to_string())
         }
     }
 }
@@ -285,46 +223,68 @@ fn handle_parse_npm(req: Request) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::{MSG_ERROR, MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING, MSG_PONG};
+
+    fn build_parse_request_body(content: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_REQUEST);
+        body.extend_from_slice(&(content.len() as u32).to_be_bytes());
+        body.extend_from_slice(content);
+        body.extend_from_slice(&0u32.to_be_bytes()); // metadata_len = 0
+        body
+    }
 
     #[test]
     fn handle_ping_returns_pong() {
-        let req = br#"{"id":"p1","type":"ping"}"#;
-        let resp = handle_request(req);
-        let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
-        assert_eq!(v["id"], "p1");
-        assert_eq!(v["type"], "pong");
-        assert!(v.get("error").is_none());
+        let resp = handle_body(&[MSG_PING]);
+        // outer_len=1 prefix, then MSG_PONG
+        assert_eq!(resp, vec![0, 0, 0, 1, MSG_PONG]);
     }
 
     #[test]
-    fn handle_unknown_kind() {
-        let req = br#"{"id":"u1","type":"quuz"}"#;
-        let resp = handle_request(req);
-        let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
-        assert_eq!(v["type"], "error");
-        assert_eq!(v["error"]["code"], "UNKNOWN_REQUEST");
+    fn handle_parse_v3_lockfile() {
+        let body = br#"{"lockfileVersion":3,"packages":{"": {"name":"x","version":"1"}}}"#;
+        let req_body = build_parse_request_body(body);
+        let resp = handle_body(&req_body);
+
+        // Parse the outer layout of the response.
+        assert!(resp.len() > 5);
+        let outer_len = u32::from_be_bytes([resp[0], resp[1], resp[2], resp[3]]) as usize;
+        assert_eq!(resp.len(), 4 + outer_len);
+        assert_eq!(resp[4], MSG_PARSE_RESULT);
+        let sbom_len = u32::from_be_bytes([resp[5], resp[6], resp[7], resp[8]]) as usize;
+        assert_eq!(sbom_len, resp.len() - 9);
+
+        // The JSON must be a valid ParsedSBOM with zero packages.
+        let json = &resp[9..];
+        let v: serde_json::Value = serde_json::from_slice(json).unwrap();
+        assert_eq!(v["Ecosystem"], "npm");
+        assert_eq!(v["Packages"].as_array().unwrap().len(), 0);
     }
 
     #[test]
-    fn handle_malformed_request() {
-        let req = b"{not json";
-        let resp = handle_request(req);
-        let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
-        assert_eq!(v["type"], "error");
-        assert_eq!(v["error"]["code"], "MALFORMED_REQUEST");
-    }
-
-    #[test]
-    fn handle_parse_v2_lockfile_error_code() {
+    fn handle_parse_v2_returns_error_frame() {
         let body = br#"{"lockfileVersion":2,"packages":{}}"#;
-        let b64 = BASE64_STANDARD.encode(body);
-        let req = serde_json::json!({
-            "id": "parse-v2",
-            "type": "parse_npm_lockfile",
-            "payload": { "content": b64 }
-        });
-        let resp_bytes = handle_request(serde_json::to_vec(&req).unwrap().as_slice());
-        let v: serde_json::Value = serde_json::from_slice(&resp_bytes).unwrap();
-        assert_eq!(v["error"]["code"], "UNSUPPORTED_LOCKFILE_VERSION");
+        let req_body = build_parse_request_body(body);
+        let resp = handle_body(&req_body);
+        assert_eq!(resp[4], MSG_ERROR);
+        let code_len = u32::from_be_bytes([resp[5], resp[6], resp[7], resp[8]]) as usize;
+        let code = &resp[9..9 + code_len];
+        assert_eq!(code, b"UNSUPPORTED_LOCKFILE_VERSION");
+    }
+
+    #[test]
+    fn handle_unknown_opcode_returns_malformed_error() {
+        let resp = handle_body(&[0x7A]);
+        assert_eq!(resp[4], MSG_ERROR);
+        let code_len = u32::from_be_bytes([resp[5], resp[6], resp[7], resp[8]]) as usize;
+        let code = &resp[9..9 + code_len];
+        assert_eq!(code, b"MALFORMED_REQUEST");
+    }
+
+    #[test]
+    fn handle_empty_body_returns_malformed_error() {
+        let resp = handle_body(&[]);
+        assert_eq!(resp[4], MSG_ERROR);
     }
 }

@@ -1,5 +1,8 @@
 // Package native is the Go client for the rampart-native Rust sidecar.
-// Wire protocol documented at schemas/native-ipc.md.
+// Wire protocol documented at schemas/native-ipc.md — binary envelope
+// on the request path (raw lockfile bytes, no base64), JSON on the
+// response path (ParsedSBOM). See ADR-0005 Measured Consequences for
+// why the split is asymmetric.
 //
 // Scope (Phase 1):
 //   - One connection per Parse call. Phase 2 adds pooling once we've
@@ -12,7 +15,6 @@ package native
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -28,6 +30,15 @@ import (
 // server's 100 MiB hard cap; a mismatch would surface as a wire-framing
 // error, so keep them in sync if either side moves.
 const MaxFrameBytes = 100 * 1024 * 1024
+
+// Wire opcodes — kept in lock-step with native/crates/rampart-native/src/protocol.rs.
+const (
+	msgParseRequest byte = 0x01
+	msgParseResult  byte = 0x02
+	msgError        byte = 0x03
+	msgPong         byte = 0xFE
+	msgPing         byte = 0xFF
+)
 
 // Sentinel errors. `errors.Is` works across the Go parser (engine/sbom/npm)
 // and this client: callers can switch on `ErrUnsupportedLockfileVersion`
@@ -57,19 +68,21 @@ func New(socketPath string) *Client {
 	}
 }
 
-// Ping sends a `ping` request and returns on `pong`. Primarily used by
-// /readyz handlers and container healthchecks.
+// Ping sends a `ping` opcode and returns on `pong`. Primarily used by
+// parity tests and readiness probes.
 func (c *Client) Ping(ctx context.Context) error {
-	req := request{
-		ID:   "ping-" + nowID(),
-		Kind: "ping",
-	}
-	resp, err := c.roundTrip(ctx, req)
+	// Request body = opcode only (1 byte).
+	frame := make([]byte, 0, 5)
+	frame = binary.BigEndian.AppendUint32(frame, 1)
+	frame = append(frame, msgPing)
+
+	resp, err := c.roundTrip(ctx, frame)
 	if err != nil {
 		return err
 	}
-	if resp.Kind != "pong" {
-		return fmt.Errorf("%w: expected `pong`, got %q", ErrMalformedResponse, resp.Kind)
+	if len(resp) != 1 || resp[0] != msgPong {
+		return fmt.Errorf("%w: expected pong (single 0x%X byte), got %v",
+			ErrMalformedResponse, msgPong, resp)
 	}
 	return nil
 }
@@ -77,78 +90,48 @@ func (c *Client) Ping(ctx context.Context) error {
 // ParseNPMLockfile asks the Rust parser to parse `content`. Returns a
 // *domain.ParsedSBOM — identity fields (ID, GeneratedAt, ComponentRef,
 // CommitSHA) are the caller's responsibility; wrap with
-// engine/internal/ingestion.Ingest when the engine wants a full SBOM.
-//
-// Errors are classified via the sentinels in this package so callers can
-// errors.Is on them.
+// engine/ingestion.Ingest when the engine wants a full SBOM.
 func (c *Client) ParseNPMLockfile(ctx context.Context, content []byte) (*domain.ParsedSBOM, error) {
-	req := request{
-		ID:   "parse-" + nowID(),
-		Kind: "parse_npm_lockfile",
-		Payload: &requestPayload{
-			Content: base64.StdEncoding.EncodeToString(content),
-		},
+	// Request body layout:
+	//   1 byte opcode
+	// + 4-byte BE content_length + content bytes
+	// + 4-byte BE metadata_length (0 in Phase 1) + 0 metadata bytes
+	bodyLen := 1 + 4 + len(content) + 4
+	if bodyLen > MaxFrameBytes {
+		return nil, fmt.Errorf("request body %d exceeds MaxFrameBytes %d", bodyLen, MaxFrameBytes)
 	}
-	resp, err := c.roundTrip(ctx, req)
+
+	frame := make([]byte, 0, 4+bodyLen)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(bodyLen))
+	frame = append(frame, msgParseRequest)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(content)))
+	frame = append(frame, content...)
+	frame = binary.BigEndian.AppendUint32(frame, 0) // metadata_length = 0
+
+	respBody, err := c.roundTrip(ctx, frame)
 	if err != nil {
 		return nil, err
 	}
-	if resp.Error != nil {
-		return nil, classifyRemoteError(resp.Error)
+	if len(respBody) < 1 {
+		return nil, fmt.Errorf("%w: empty response body", ErrMalformedResponse)
 	}
-	if resp.Kind != "parse_result" {
-		return nil, fmt.Errorf("%w: expected `parse_result`, got %q", ErrMalformedResponse, resp.Kind)
+	opcode := respBody[0]
+	rest := respBody[1:]
+
+	switch opcode {
+	case msgParseResult:
+		return decodeParseResult(rest)
+	case msgError:
+		return nil, decodeErrorFrame(rest)
+	default:
+		return nil, fmt.Errorf("%w: unexpected opcode 0x%X", ErrMalformedResponse, opcode)
 	}
-	if resp.Payload == nil {
-		return nil, fmt.Errorf("%w: response payload missing", ErrMalformedResponse)
-	}
-	var pr parseResultPayload
-	if err := json.Unmarshal(resp.Payload, &pr); err != nil {
-		return nil, fmt.Errorf("%w: decode payload: %v", ErrMalformedResponse, err)
-	}
-	return &pr.ParsedSBOM, nil
 }
 
-// --- wire types (private, mirror schemas/native-ipc.md) ---
-
-type request struct {
-	ID      string          `json:"id"`
-	Kind    string          `json:"type"`
-	Payload *requestPayload `json:"payload,omitempty"`
-}
-
-type requestPayload struct {
-	// Base64-encoded lockfile body. Per the wire spec, this is the
-	// only field — identity (ID/GeneratedAt/ComponentRef/CommitSHA)
-	// moved to the engine-side ingestion layer after Adım 6 made the
-	// parser pure.
-	Content string `json:"content"`
-}
-
-type responseEnvelope struct {
-	ID      string          `json:"id"`
-	Kind    string          `json:"type"`
-	Payload json.RawMessage `json:"payload,omitempty"`
-	Error   *remoteError    `json:"error,omitempty"`
-}
-
-type remoteError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
-}
-
-type parseResultPayload struct {
-	ParsedSBOM domain.ParsedSBOM `json:"parsed_sbom"`
-	Stats      parseStats        `json:"stats"`
-}
-
-type parseStats struct {
-	ParseMS      int64 `json:"parse_ms"`
-	PackageCount int   `json:"package_count"`
-	BytesRead    int64 `json:"bytes_read"`
-}
-
-func (c *Client) roundTrip(ctx context.Context, req request) (*responseEnvelope, error) {
+// roundTrip opens a UDS connection, writes the whole request frame,
+// and returns the response body (everything after the 4-byte outer
+// length prefix). Single-shot — the connection is closed on return.
+func (c *Client) roundTrip(ctx context.Context, frame []byte) ([]byte, error) {
 	d := net.Dialer{Timeout: c.dialTimeout}
 	conn, err := d.DialContext(ctx, "unix", c.socketPath)
 	if err != nil {
@@ -160,64 +143,71 @@ func (c *Client) roundTrip(ctx context.Context, req request) (*responseEnvelope,
 		_ = conn.SetDeadline(deadline)
 	}
 
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, fmt.Errorf("marshal request: %w", err)
-	}
-	if len(body) > MaxFrameBytes {
-		return nil, fmt.Errorf("request frame %d exceeds MaxFrameBytes %d", len(body), MaxFrameBytes)
+	if _, err := conn.Write(frame); err != nil {
+		return nil, fmt.Errorf("write request frame: %w", err)
 	}
 
 	var header [4]byte
-	binary.BigEndian.PutUint32(header[:], uint32(len(body)))
-	if _, err := conn.Write(header[:]); err != nil {
-		return nil, fmt.Errorf("write frame header: %w", err)
-	}
-	if _, err := conn.Write(body); err != nil {
-		return nil, fmt.Errorf("write frame body: %w", err)
-	}
-
-	var respHeader [4]byte
-	if _, err := io.ReadFull(conn, respHeader[:]); err != nil {
+	if _, err := io.ReadFull(conn, header[:]); err != nil {
 		return nil, fmt.Errorf("read response header: %w", err)
 	}
-	respLen := binary.BigEndian.Uint32(respHeader[:])
-	if respLen > MaxFrameBytes {
-		return nil, fmt.Errorf("response frame %d exceeds MaxFrameBytes %d", respLen, MaxFrameBytes)
+	respLen := binary.BigEndian.Uint32(header[:])
+	if respLen == 0 || respLen > MaxFrameBytes {
+		return nil, fmt.Errorf("response frame %d out of range [1, %d]", respLen, MaxFrameBytes)
 	}
 	respBody := make([]byte, respLen)
 	if _, err := io.ReadFull(conn, respBody); err != nil {
 		return nil, fmt.Errorf("read response body: %w", err)
 	}
-
-	var env responseEnvelope
-	if err := json.Unmarshal(respBody, &env); err != nil {
-		return nil, fmt.Errorf("%w: decode envelope: %v — body %q",
-			ErrMalformedResponse, err, truncate(string(respBody), 200))
-	}
-	return &env, nil
+	return respBody, nil
 }
 
-func classifyRemoteError(e *remoteError) error {
-	base := fmt.Errorf("%w: [%s] %s", ErrRemoteError, e.Code, e.Message)
-	switch e.Code {
+func decodeParseResult(rest []byte) (*domain.ParsedSBOM, error) {
+	if len(rest) < 4 {
+		return nil, fmt.Errorf("%w: parse_result truncated at sbom length prefix", ErrMalformedResponse)
+	}
+	sbomLen := binary.BigEndian.Uint32(rest[:4])
+	if int(sbomLen)+4 != len(rest) {
+		return nil, fmt.Errorf("%w: parse_result inner length (%d) does not match remaining (%d)",
+			ErrMalformedResponse, sbomLen, len(rest)-4)
+	}
+	var sbom domain.ParsedSBOM
+	if err := json.Unmarshal(rest[4:], &sbom); err != nil {
+		return nil, fmt.Errorf("%w: decode parsed_sbom: %v", ErrMalformedResponse, err)
+	}
+	return &sbom, nil
+}
+
+func decodeErrorFrame(rest []byte) error {
+	if len(rest) < 4 {
+		return fmt.Errorf("%w: error frame truncated at code length", ErrMalformedResponse)
+	}
+	codeLen := binary.BigEndian.Uint32(rest[:4])
+	if 4+int(codeLen) > len(rest) {
+		return fmt.Errorf("%w: error code overruns frame", ErrMalformedResponse)
+	}
+	code := string(rest[4 : 4+codeLen])
+	after := 4 + int(codeLen)
+	if len(rest) < after+4 {
+		return fmt.Errorf("%w: error frame truncated at message length", ErrMalformedResponse)
+	}
+	msgLen := binary.BigEndian.Uint32(rest[after : after+4])
+	if after+4+int(msgLen) != len(rest) {
+		return fmt.Errorf("%w: error message overruns or underruns frame", ErrMalformedResponse)
+	}
+	message := string(rest[after+4 : after+4+int(msgLen)])
+	return classifyRemoteError(code, message)
+}
+
+func classifyRemoteError(code, message string) error {
+	base := fmt.Errorf("%w: [%s] %s", ErrRemoteError, code, message)
+	switch code {
 	case "MALFORMED_LOCKFILE":
-		return fmt.Errorf("%w: %s: %w", ErrMalformedLockfile, e.Message, base)
+		return fmt.Errorf("%w: %s: %w", ErrMalformedLockfile, message, base)
 	case "UNSUPPORTED_LOCKFILE_VERSION":
-		return fmt.Errorf("%w: %s: %w", ErrUnsupportedLockfileVersion, e.Message, base)
+		return fmt.Errorf("%w: %s: %w", ErrUnsupportedLockfileVersion, message, base)
 	case "EMPTY_LOCKFILE":
-		return fmt.Errorf("%w: %s: %w", ErrEmptyLockfile, e.Message, base)
+		return fmt.Errorf("%w: %s: %w", ErrEmptyLockfile, message, base)
 	}
 	return base
-}
-
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
-
-func nowID() string {
-	return fmt.Sprintf("%d", time.Now().UnixNano())
 }
