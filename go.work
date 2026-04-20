@@ -3,8 +3,6 @@ go 1.23
 use (
 	./engine
 	./cli
+	./integrations/precommit-hook
+	./integrations/slack-notifier
 )
-
-// Modules added as each component is scaffolded:
-//   use ./integrations/precommit-hook     (Adım 4)
-//   use ./integrations/slack-notifier     (Adım 4)

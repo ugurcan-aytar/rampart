@@ -1,0 +1,8 @@
+- id: rampart-lockfile
+  name: rampart — validate npm lockfile
+  description: Rejects a commit if a package-lock.json is malformed or not lockfileVersion 3.
+  entry: rampart-precommit
+  language: golang
+  types: [json]
+  files: 'package-lock\.json$'
+  minimum_pre_commit_version: 3.5.0
