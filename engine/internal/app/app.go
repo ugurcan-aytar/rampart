@@ -16,6 +16,7 @@ import (
 
 	"github.com/ugurcan-aytar/rampart/engine/internal/api"
 	"github.com/ugurcan-aytar/rampart/engine/internal/config"
+	"github.com/ugurcan-aytar/rampart/engine/internal/events"
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/sbom/npm"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
@@ -28,6 +29,7 @@ type App struct {
 	log     *slog.Logger
 	storage storage.Storage
 	trust   trust.Engine
+	events  *events.Bus
 	server  *http.Server
 }
 
@@ -54,15 +56,16 @@ func runServer(ctx context.Context, _ []string) error {
 	return a.Run(ctx)
 }
 
-// New wires storage, trust, and the HTTP server.
+// New wires storage, trust, the event bus, and the HTTP server.
 func New(_ context.Context, cfg *config.Config, log *slog.Logger) (*App, error) {
 	if log == nil {
 		log = slog.Default()
 	}
 	store := memory.New()
+	bus := events.NewBus(cfg.SSESubscriberBuffer)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewServer(store).Handler(),
+		Handler:           api.NewServer(store, bus, cfg.SSEHeartbeatInterval).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return &App{
@@ -70,6 +73,7 @@ func New(_ context.Context, cfg *config.Config, log *slog.Logger) (*App, error) 
 		log:     log,
 		storage: store,
 		trust:   trust.AlwaysTrust{},
+		events:  bus,
 		server:  srv,
 	}, nil
 }

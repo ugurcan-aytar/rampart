@@ -12,19 +12,33 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/api/gen"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
+	"github.com/ugurcan-aytar/rampart/engine/internal/events"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 )
 
+// Server implements gen.ServerInterface over a storage backend and an
+// in-process event bus. The bus + heartbeat are injected rather than
+// constructed here so tests can drive different timing / buffer sizes.
 type Server struct {
-	storage storage.Storage
-	log     *slog.Logger
+	storage           storage.Storage
+	events            *events.Bus
+	heartbeatInterval time.Duration
+	log               *slog.Logger
 }
 
-func NewServer(s storage.Storage) *Server {
-	return &Server{storage: s, log: slog.Default()}
+// NewServer wires a Server against the storage + event bus + heartbeat.
+// Production callers pass config.Default()-derived values; tests override.
+func NewServer(s storage.Storage, bus *events.Bus, heartbeat time.Duration) *Server {
+	return &Server{
+		storage:           s,
+		events:            bus,
+		heartbeatInterval: heartbeat,
+		log:               slog.Default(),
+	}
 }
 
 // Handler returns the OpenAPI-generated mux with the Server's methods bound.
@@ -107,10 +121,27 @@ func (s *Server) GetSBOM(w http.ResponseWriter, _ *http.Request, _ string) {
 	writeNotImplemented(w, "GetSBOM")
 }
 
-// Stream is the SSE endpoint; the real adapter lives in sse.go once the ADR
-// is approved. The stub returns 501 so gen.ServerInterface is satisfied.
-func (s *Server) Stream(w http.ResponseWriter, _ *http.Request, _ gen.StreamParams) {
-	writeNotImplemented(w, "Stream (SSE adapter pending ADR)")
+// Stream is the SSE endpoint. The adapter lives in sse.go; this handler
+// just sets up the framer, subscribes to the event bus, and enters the
+// loop. Disconnect cleanup is handled by streamLoop's ctx-done branch.
+func (s *Server) Stream(w http.ResponseWriter, r *http.Request, params gen.StreamParams) {
+	sse, err := newSSEWriter(w)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "SSE_UNSUPPORTED", err.Error())
+		return
+	}
+
+	// Phase 1 is hot-only: we log the Last-Event-ID so we can grep the
+	// signal to size Phase 2's replay buffer when it lands.
+	if params.LastEventID != nil && *params.LastEventID != "" {
+		s.log.Info("sse: client requested replay but only hot-delivery is supported in Phase 1",
+			"last_event_id", *params.LastEventID)
+	}
+
+	ch, cancel := s.events.Subscribe(r.Context())
+	defer cancel()
+
+	streamLoop(r.Context(), s.log, sse, ch, s.heartbeatInterval)
 }
 
 // --- helpers ---------------------------------------------------------------
