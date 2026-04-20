@@ -14,6 +14,16 @@ make bootstrap
 
 `make bootstrap` installs JS deps with Yarn 4 (corepack-managed), syncs the Go workspace, and fails fast if the supply-chain gates in `.yarnrc.yml` have drifted.
 
+## OpenAPI contract
+
+`schemas/openapi.yaml` is the single source of truth. Go types live at
+`engine/api/gen/api.gen.go` (oapi-codegen); TS types at
+`backstage/plugins/rampart/src/api/gen/schema.ts` (openapi-typescript).
+
+Regenerate both with `make gen`. Individual targets: `make gen-go`, `make gen-ts`.
+
+CI gate: `make gen-check` runs both generators then asserts `git diff --exit-code`. If you change `schemas/openapi.yaml` and forget to regenerate, this fails. See [schemas/README.md](./schemas/README.md) for the full policy.
+
 ## Commit conventions
 
 Conventional Commits — `type(scope): message`.

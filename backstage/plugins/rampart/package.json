@@ -1,0 +1,22 @@
+{
+  "name": "@ugurcan-aytar/backstage-plugin-rampart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "rampart Backstage plugin. Scaffold — full frontend lands in Adım 5.",
+  "license": "MIT",
+  "author": "Uğurcan Aytar <aytarugurcan@gmail.com>",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ugurcan-aytar/rampart.git",
+    "directory": "backstage/plugins/rampart"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "gen:api": "openapi-typescript ../../../schemas/openapi.yaml -o src/api/gen/schema.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "openapi-typescript": "7.4.3",
+    "typescript": "5.6.3"
+  }
+}

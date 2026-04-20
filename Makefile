@@ -44,16 +44,29 @@ bootstrap: ## Install JS deps + sync Go workspace. Fails if supply-chain gates a
 	go work sync
 	@echo "bootstrap complete."
 
-# --- Codegen (Adım 3) ------------------------------------------------------
+# --- Codegen ---------------------------------------------------------------
 
-.PHONY: gen gen-go gen-ts
-gen: gen-go gen-ts ## Regenerate Go + TS types from OpenAPI. (Adım 3)
+OAPI_CODEGEN_VERSION := v2.4.1
 
-gen-go: ## Regenerate Go types from schemas/openapi.yaml. (Adım 3)
-	@echo "Not yet wired — see FIRST.md Adım 3."
+.PHONY: gen gen-go gen-ts gen-check
+gen: gen-go gen-ts ## Regenerate Go + TS types from OpenAPI.
 
-gen-ts: ## Regenerate TS types from schemas/openapi.yaml. (Adım 3)
-	@echo "Not yet wired — see FIRST.md Adım 3."
+gen-go: ## Regenerate engine Go types from schemas/openapi.yaml.
+	cd engine && go run github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen@$(OAPI_CODEGEN_VERSION) \
+	  -config oapi-codegen.yaml ../schemas/openapi.yaml
+
+gen-ts: ## Regenerate Backstage plugin TS types from schemas/openapi.yaml.
+	@test -x node_modules/.bin/openapi-typescript || yarn install
+	cd backstage/plugins/rampart && yarn run gen:api
+
+gen-check: gen ## CI gate — regen then assert zero diff. Fails if a contract edit forgot to run make gen.
+	@if ! git diff --exit-code --quiet; then \
+	  echo "FAIL: generated artefacts drift from schemas/openapi.yaml."; \
+	  echo "      Run 'make gen' and commit the result."; \
+	  git --no-pager diff --stat; \
+	  exit 1; \
+	fi
+	@echo "PASS: generated artefacts in sync with schemas/openapi.yaml"
 
 # --- Build / Test / Lint (filled in Adım 2+) -------------------------------
 

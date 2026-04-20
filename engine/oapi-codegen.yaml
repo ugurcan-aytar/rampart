@@ -1,0 +1,14 @@
+# oapi-codegen config for rampart engine.
+# Regenerated via `make gen-go` from repo root; ends up at api/gen/api.gen.go.
+#
+# std-http-server is deliberate: rampart uses Go 1.22+ net/http.ServeMux
+# path patterns (no chi / echo / gin per ADR-0003).
+
+package: gen
+output: api/gen/api.gen.go
+generate:
+  models: true
+  std-http-server: true
+  embedded-spec: true
+output-options:
+  skip-prune: false

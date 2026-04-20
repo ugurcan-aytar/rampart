@@ -1,0 +1,823 @@
+openapi: 3.1.0
+info:
+  title: rampart engine API
+  version: 0.1.0
+  summary: Supply chain incident response engine.
+  description: |
+    `rampart` is a supply chain incident response engine. It exposes five
+    resource families — components, SBOMs, IoCs, incidents, publishers —
+    plus a server-sent-events stream of live domain events. Four consumers
+    (Backstage plugin, GitHub Action, CLI, Slack notifier) all speak this
+    contract; none import the engine's Go types directly.
+
+    This document is the single source of truth. Go types live at
+    `engine/api/gen/` (oapi-codegen) and TS types live at
+    `backstage/plugins/rampart/src/api/gen/schema.ts` (openapi-typescript).
+    CI fails if either generated artifact drifts from this file (`make gen
+    && git diff --exit-code`).
+  contact:
+    name: Uğurcan Aytar
+    email: aytarugurcan@gmail.com
+  license:
+    name: MIT
+    url: https://github.com/ugurcan-aytar/rampart/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8080
+    description: Local demo
+
+tags:
+  - name: health
+    description: Liveness / readiness probes.
+  - name: components
+    description: Component catalog mirrored from Backstage.
+  - name: sboms
+    description: Historical dependency snapshots per component.
+  - name: iocs
+    description: Indicators of Compromise.
+  - name: incidents
+    description: Incident lifecycle and remediation.
+  - name: stream
+    description: Server-sent-events stream of live domain events.
+
+paths:
+  /healthz:
+    get:
+      tags: [health]
+      operationId: Healthz
+      summary: Liveness probe
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+
+  /readyz:
+    get:
+      tags: [health]
+      operationId: Readyz
+      summary: Readiness probe
+      responses:
+        '200':
+          description: Ready — storage and trust engine responsive.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Health' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/components:
+    get:
+      tags: [components]
+      operationId: ListComponents
+      summary: List ingested components.
+      parameters:
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of components.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComponentPage' }
+    post:
+      tags: [components]
+      operationId: UpsertComponent
+      summary: Upsert a component (idempotent).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Component' }
+      responses:
+        '200':
+          description: The upserted component.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Component' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/components/{componentRef}/sboms:
+    parameters:
+      - $ref: '#/components/parameters/ComponentRef'
+    get:
+      tags: [sboms]
+      operationId: ListSBOMsByComponent
+      summary: List SBOMs for a component, oldest first.
+      responses:
+        '200':
+          description: Ordered SBOM list.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SBOM' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [sboms]
+      operationId: SubmitSBOM
+      summary: Submit a new SBOM for a component.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SBOMSubmission' }
+      responses:
+        '201':
+          description: SBOM accepted; returns the parsed resource.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SBOM' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '415':
+          description: Unsupported sourceFormat.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/sboms/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [sboms]
+      operationId: GetSBOM
+      summary: Get a specific SBOM by id.
+      responses:
+        '200':
+          description: SBOM.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SBOM' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/iocs:
+    get:
+      tags: [iocs]
+      operationId: ListIoCs
+      summary: List known IoCs.
+      parameters:
+        - name: ecosystem
+          in: query
+          schema: { type: string, example: npm }
+        - name: severity
+          in: query
+          schema: { $ref: '#/components/schemas/Severity' }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: IoC page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IoCPage' }
+    post:
+      tags: [iocs]
+      operationId: SubmitIoC
+      summary: Submit an IoC (from a feed or manual entry).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IoC' }
+      responses:
+        '201':
+          description: IoC accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IoC' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/incidents:
+    get:
+      tags: [incidents]
+      operationId: ListIncidents
+      summary: List incidents, filterable by state / ecosystem / since.
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: '#/components/schemas/IncidentState' }
+        - name: ecosystem
+          in: query
+          schema: { type: string }
+        - name: since
+          in: query
+          schema: { type: string, format: date-time }
+        - $ref: '#/components/parameters/Cursor'
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Incident page.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentPage' }
+
+  /v1/incidents/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [incidents]
+      operationId: GetIncident
+      summary: Get an incident by id.
+      responses:
+        '200':
+          description: Incident.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Incident' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/incidents/{id}/transition:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [incidents]
+      operationId: TransitionIncident
+      summary: Transition an incident's state.
+      description: |
+        Idempotent: repeating the same transition is a no-op.
+        Illegal transitions (e.g. `closed` → `remediating`) return 409.
+
+        Note: path is `/transition` (plain sub-resource) rather than the
+        Google `:transition` custom-verb form, because Go 1.22+
+        `net/http.ServeMux` rejects wildcard segments followed by `:suffix`.
+        Per ADR-0003 the engine uses stdlib routing — no chi/gorilla.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncidentTransitionRequest' }
+      responses:
+        '200':
+          description: Updated incident.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Incident' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Illegal transition.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /v1/incidents/{id}/remediations:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    post:
+      tags: [incidents]
+      operationId: AddRemediation
+      summary: Record a remediation action on an incident (audit-only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Remediation' }
+      responses:
+        '201':
+          description: Remediation recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Remediation' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/blast-radius:
+    post:
+      tags: [iocs]
+      operationId: BlastRadius
+      summary: Given a list of IoCs, return affected components.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BlastRadiusRequest' }
+      responses:
+        '200':
+          description: Affected components.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/BlastRadiusResponse' }
+
+  /v1/stream:
+    get:
+      tags: [stream]
+      operationId: Stream
+      summary: Server-sent-events stream of live domain events.
+      description: |
+        Long-lived `text/event-stream` response. Clients subscribe once and
+        receive each `StreamEvent` as an SSE frame (`event: <type>\ndata: <json>\n\n`).
+        Supports `Last-Event-ID` for resume.
+
+        Because oapi-codegen does not natively handle `text/event-stream`,
+        the `/v1/stream` route is served by a hand-written adapter that
+        lives *outside* the generated mux (see `engine/internal/api/sse.go`
+        in Adım 3 Part 2 — design first, approved, then implemented).
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          description: Resume from this event id (monotonic ULID).
+          schema: { type: string }
+      responses:
+        '200':
+          description: SSE stream.
+          headers:
+            Cache-Control:
+              schema: { type: string, example: 'no-cache' }
+            Connection:
+              schema: { type: string, example: 'keep-alive' }
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/StreamEvent' }
+
+components:
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      description: Opaque pagination cursor returned from the previous page.
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      description: Maximum items per page.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    ComponentRef:
+      name: componentRef
+      in: path
+      required: true
+      description: |
+        Component reference in the form `kind:<Kind>/<namespace>/<name>`.
+      schema:
+        type: string
+        pattern: '^kind:[A-Za-z0-9]+/[A-Za-z0-9-]+/[A-Za-z0-9-]+$'
+        example: 'kind:Component/default/web-app'
+
+  responses:
+    BadRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ServiceUnavailable:
+      description: Service not ready.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, ready, unavailable]
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable code (e.g. INVALID_TRANSITION).
+          example: INVALID_TRANSITION
+        message:
+          type: string
+          description: Human-readable detail.
+          example: 'cannot transition from closed to remediating'
+        details:
+          type: object
+          additionalProperties: true
+          description: Optional structured context.
+
+    # -------------------------------- Components
+
+    Component:
+      type: object
+      required: [ref, kind, namespace, name]
+      properties:
+        ref:
+          type: string
+          pattern: '^kind:[A-Za-z0-9]+/[A-Za-z0-9-]+/[A-Za-z0-9-]+$'
+          example: 'kind:Component/default/web-app'
+        kind:
+          type: string
+          example: Component
+        namespace:
+          type: string
+          example: default
+        name:
+          type: string
+          example: web-app
+        owner:
+          type: string
+          example: 'team:platform'
+        system:
+          type: string
+          example: billing
+        lifecycle:
+          type: string
+          enum: [experimental, production, deprecated]
+        tags:
+          type: array
+          items: { type: string }
+        annotations:
+          type: object
+          additionalProperties: { type: string }
+
+    ComponentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Component' }
+        nextCursor:
+          type: string
+          description: Pass this to the next request's `cursor` param to paginate.
+
+    # -------------------------------- SBOM
+
+    PackageVersion:
+      type: object
+      required: [ecosystem, name, version, purl]
+      properties:
+        ecosystem:
+          type: string
+          example: npm
+        name:
+          type: string
+          example: axios
+        version:
+          type: string
+          example: '1.11.0'
+        purl:
+          type: string
+          description: Canonical package URL per https://github.com/package-url/purl-spec
+          example: 'pkg:npm/axios@1.11.0'
+        scope:
+          type: array
+          items:
+            type: string
+            enum: [dev, optional, peer]
+        integrity:
+          type: string
+          nullable: true
+          description: Subresource integrity hash reported by the lockfile.
+          example: 'sha512-...'
+
+    SBOM:
+      type: object
+      required: [id, componentRef, ecosystem, generatedAt, sourceFormat]
+      properties:
+        id:
+          type: string
+          description: ULID.
+        componentRef:
+          type: string
+        commitSha:
+          type: string
+          description: Git commit SHA the lockfile was taken at.
+        ecosystem:
+          type: string
+        generatedAt:
+          type: string
+          format: date-time
+        sourceFormat:
+          type: string
+          enum: [npm-package-lock-v3]
+          description: Parser strategy. Extends as ingestion backends land.
+        sourceBytes:
+          type: integer
+          format: int64
+        packages:
+          type: array
+          items: { $ref: '#/components/schemas/PackageVersion' }
+
+    SBOMSubmission:
+      type: object
+      required: [ecosystem, sourceFormat, content]
+      properties:
+        ecosystem:
+          type: string
+        sourceFormat:
+          type: string
+          enum: [npm-package-lock-v3]
+        commitSha:
+          type: string
+        content:
+          type: string
+          format: byte
+          description: Base64-encoded lockfile bytes.
+
+    # -------------------------------- Severity / IoC
+
+    Severity:
+      type: string
+      enum: [low, medium, high, critical]
+
+    IoCKind:
+      type: string
+      enum: [packageVersion, packageRange, publisherAnomaly]
+
+    IoC:
+      type: object
+      required: [id, kind, severity, ecosystem, publishedAt]
+      properties:
+        id: { type: string, description: ULID }
+        kind: { $ref: '#/components/schemas/IoCKind' }
+        severity: { $ref: '#/components/schemas/Severity' }
+        ecosystem: { type: string, example: npm }
+        source:
+          type: string
+          description: Feed name, e.g. osv.dev, GHSA.
+        publishedAt:
+          type: string
+          format: date-time
+        description:
+          type: string
+        packageVersion:
+          $ref: '#/components/schemas/IoCPackageVersion'
+        packageRange:
+          $ref: '#/components/schemas/IoCPackageRange'
+        publisherAnomaly:
+          $ref: '#/components/schemas/IoCPublisherAnomaly'
+      description: |
+        Tagged union: `kind` names which of the three body sub-objects is set.
+        Engine-side `IoC.Validate()` enforces `set == 1 && matches kind`.
+
+    IoCPackageVersion:
+      type: object
+      required: [name, version, purl]
+      properties:
+        name: { type: string, example: axios }
+        version: { type: string, example: '1.11.0' }
+        purl: { type: string, example: 'pkg:npm/axios@1.11.0' }
+
+    IoCPackageRange:
+      type: object
+      required: [name, constraint]
+      properties:
+        name: { type: string, example: axios }
+        constraint:
+          type: string
+          description: Semver range per github.com/Masterminds/semver.
+          example: '>=1.10.0 <1.12.0'
+
+    IoCPublisherAnomaly:
+      type: object
+      required: [publisherName]
+      properties:
+        publisherName: { type: string }
+        signals:
+          type: array
+          items: { $ref: '#/components/schemas/PublisherSignal' }
+
+    IoCPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/IoC' }
+        nextCursor: { type: string }
+
+    # -------------------------------- Publisher / Signals
+
+    Publisher:
+      type: object
+      required: [ecosystem, name]
+      properties:
+        ecosystem: { type: string, example: npm }
+        name: { type: string, example: axios-maintainer }
+        firstSeen: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+
+    PublisherSignal:
+      type: object
+      required: [type, publisher, severity, detectedAt]
+      properties:
+        type:
+          type: string
+          description: |
+            Signal catalog — any change here is a breaking contract change
+            and must be mirrored in `engine/internal/domain/publisher.go`.
+          enum:
+            - new_maintainer_email
+            - dormant_account_active
+            - missing_git_tag
+            - off_hours_publish
+            - oidc_regression
+            - version_jump
+            - low_download_day_attack
+        publisher:
+          $ref: '#/components/schemas/Publisher'
+        package:
+          $ref: '#/components/schemas/PackageVersion'
+        severity: { $ref: '#/components/schemas/Severity' }
+        description: { type: string }
+        evidence:
+          type: object
+          additionalProperties: true
+        detectedAt: { type: string, format: date-time }
+
+    # -------------------------------- Incidents
+
+    IncidentState:
+      type: string
+      description: |
+        State machine: pending → triaged → acknowledged → remediating → closed.
+        Any non-terminal state may transition to `dismissed`.
+        `closed` and `dismissed` are terminal.
+      enum: [pending, triaged, acknowledged, remediating, closed, dismissed]
+
+    Incident:
+      type: object
+      required: [id, iocId, state, openedAt, lastTransitionedAt]
+      properties:
+        id: { type: string, description: ULID }
+        iocId: { type: string }
+        state: { $ref: '#/components/schemas/IncidentState' }
+        openedAt: { type: string, format: date-time }
+        lastTransitionedAt: { type: string, format: date-time }
+        affectedComponentsSnapshot:
+          type: array
+          description: |
+            Blast radius as of `openedAt` — frozen; new SBOMs do not mutate it.
+          items: { type: string }
+        remediations:
+          type: array
+          items: { $ref: '#/components/schemas/Remediation' }
+
+    IncidentPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Incident' }
+        nextCursor: { type: string }
+
+    IncidentTransitionRequest:
+      type: object
+      required: [to]
+      properties:
+        to: { $ref: '#/components/schemas/IncidentState' }
+        actorRef:
+          type: string
+          example: 'team:platform'
+        note:
+          type: string
+
+    # -------------------------------- Remediations
+
+    RemediationKind:
+      type: string
+      enum: [pin_version, rotate_secret, open_pr, notify, dismiss]
+
+    Remediation:
+      type: object
+      required: [id, incidentId, kind, executedAt]
+      properties:
+        id: { type: string, description: ULID }
+        incidentId: { type: string }
+        kind: { $ref: '#/components/schemas/RemediationKind' }
+        executedAt: { type: string, format: date-time }
+        actorRef:
+          type: string
+          example: 'team:platform'
+        details:
+          type: object
+          additionalProperties: true
+
+    # -------------------------------- Blast radius
+
+    BlastRadiusRequest:
+      type: object
+      required: [iocs]
+      properties:
+        iocs:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/IoC' }
+
+    BlastRadiusResponse:
+      type: object
+      required: [affectedComponentRefs, computedAt]
+      properties:
+        affectedComponentRefs:
+          type: array
+          items: { type: string }
+        computedAt: { type: string, format: date-time }
+
+    # -------------------------------- SSE events
+    #
+    # StreamEvent is a discriminated union. Each variant extends StreamEventBase
+    # and locks `type` to a single enum value — so TS/Go codegen both get
+    # narrowable types without duplicating the timestamp field five times.
+
+    StreamEventBase:
+      type: object
+      required: [type, occurredAt]
+      properties:
+        type: { type: string }
+        occurredAt: { type: string, format: date-time }
+
+    IncidentOpenedEvent:
+      allOf:
+        - $ref: '#/components/schemas/StreamEventBase'
+        - type: object
+          required: [type, incidentId, iocId]
+          properties:
+            type: { type: string, enum: [incident.opened] }
+            incidentId: { type: string }
+            iocId: { type: string }
+            affectedComponentsSnapshot:
+              type: array
+              items: { type: string }
+
+    IncidentTransitionedEvent:
+      allOf:
+        - $ref: '#/components/schemas/StreamEventBase'
+        - type: object
+          required: [type, incidentId, from, to]
+          properties:
+            type: { type: string, enum: [incident.transitioned] }
+            incidentId: { type: string }
+            from: { $ref: '#/components/schemas/IncidentState' }
+            to: { $ref: '#/components/schemas/IncidentState' }
+
+    RemediationAddedEvent:
+      allOf:
+        - $ref: '#/components/schemas/StreamEventBase'
+        - type: object
+          required: [type, incidentId, remediationId, kind]
+          properties:
+            type: { type: string, enum: [remediation.added] }
+            incidentId: { type: string }
+            remediationId: { type: string }
+            kind: { $ref: '#/components/schemas/RemediationKind' }
+
+    SBOMIngestedEvent:
+      allOf:
+        - $ref: '#/components/schemas/StreamEventBase'
+        - type: object
+          required: [type, sbomId, componentRef]
+          properties:
+            type: { type: string, enum: [sbom.ingested] }
+            sbomId: { type: string }
+            componentRef: { type: string }
+
+    IoCMatchedEvent:
+      allOf:
+        - $ref: '#/components/schemas/StreamEventBase'
+        - type: object
+          required: [type, iocId, matchedComponentRefs]
+          properties:
+            type: { type: string, enum: [ioc.matched] }
+            iocId: { type: string }
+            matchedComponentRefs:
+              type: array
+              items: { type: string }
+
+    StreamEvent:
+      description: |
+        A domain event as it travels over SSE. Discriminator field is `type`;
+        TS clients narrow by `type`, Go clients type-switch on the generated
+        union after unmarshalling.
+      oneOf:
+        - $ref: '#/components/schemas/IncidentOpenedEvent'
+        - $ref: '#/components/schemas/IncidentTransitionedEvent'
+        - $ref: '#/components/schemas/RemediationAddedEvent'
+        - $ref: '#/components/schemas/SBOMIngestedEvent'
+        - $ref: '#/components/schemas/IoCMatchedEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          incident.opened: '#/components/schemas/IncidentOpenedEvent'
+          incident.transitioned: '#/components/schemas/IncidentTransitionedEvent'
+          remediation.added: '#/components/schemas/RemediationAddedEvent'
+          sbom.ingested: '#/components/schemas/SBOMIngestedEvent'
+          ioc.matched: '#/components/schemas/IoCMatchedEvent'

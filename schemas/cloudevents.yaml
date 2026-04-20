@@ -1,0 +1,67 @@
+# CloudEvents 1.0 wrapping for rampart engine events.
+#
+# Scope (Phase 1): the schema below describes the envelope rampart will use
+# when it starts publishing to an external event bus. Nothing wires to this
+# yet — the engine's SSE stream (schemas/openapi.yaml #/components/schemas/StreamEvent)
+# is the *only* live event transport in Phase 1. When Phase 2 adds Kafka /
+# NATS / EventBridge publishing, each outgoing message wraps the domain
+# event in this envelope.
+#
+# Source: https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md
+
+$schema: https://json-schema.org/draft/2020-12/schema
+$id: https://ugurcan-aytar.github.io/rampart/schemas/cloudevents.yaml
+title: rampart CloudEvent envelope
+type: object
+required:
+  - specversion
+  - id
+  - source
+  - type
+  - time
+  - datacontenttype
+  - data
+properties:
+  specversion:
+    type: string
+    const: '1.0'
+  id:
+    type: string
+    description: Unique event id (ULID).
+  source:
+    type: string
+    format: uri
+    examples:
+      - 'rampart://engine/incidents'
+      - 'rampart://engine/sboms'
+  type:
+    type: string
+    description: |
+      Reverse-DNS event type matching StreamEvent.type in openapi.yaml.
+    enum:
+      - io.rampart.incident.opened
+      - io.rampart.incident.transitioned
+      - io.rampart.remediation.added
+      - io.rampart.sbom.ingested
+      - io.rampart.ioc.matched
+  subject:
+    type: string
+    description: |
+      The primary aggregate id the event is about — incident id, sbom id,
+      or ioc id depending on type.
+  time:
+    type: string
+    format: date-time
+  datacontenttype:
+    type: string
+    const: application/json
+  dataschema:
+    type: string
+    format: uri
+    description: URI pointing to the matching StreamEvent variant schema.
+  data:
+    description: |
+      Matches the corresponding StreamEvent variant from openapi.yaml —
+      one of IncidentOpenedEvent, IncidentTransitionedEvent,
+      RemediationAddedEvent, SBOMIngestedEvent, IoCMatchedEvent.
+    $ref: 'openapi.yaml#/components/schemas/StreamEvent'
