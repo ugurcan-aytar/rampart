@@ -1,0 +1,52 @@
+# rampart-native — Rust sidecar that parses large npm lockfiles for the
+# Go engine over a Unix Domain Socket. See docs/decisions/0005-no-cgo-
+# rust-via-uds.md for the architecture, schemas/native-ipc.md for the
+# wire protocol.
+
+[workspace]
+members = [
+    "crates/rampart-native",
+    "crates/rampart-native-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Uğurcan Aytar <aytarugurcan@gmail.com>"]
+license = "MIT"
+repository = "https://github.com/ugurcan-aytar/rampart"
+
+[workspace.dependencies]
+# Serde is the de-facto Rust serialization framework; derive macros
+# come from its `derive` feature. Ref: https://serde.rs
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Tokio: async runtime. `rt` (single-threaded), `net` (UnixListener),
+# `io-util` (AsyncReadExt/WriteExt), `macros` (#[tokio::main]),
+# `signal` (SIGTERM handling), `time` (timeouts).
+# Phase 1 is single-threaded per ADR-0005; `rt-multi-thread` is a Phase 2 lever.
+# Ref: https://docs.rs/tokio/latest/tokio/#feature-flags
+tokio = { version = "1", features = ["rt", "net", "io-util", "macros", "signal", "sync", "time"] }
+
+thiserror = "2"           # derive-based error impls; ref: https://github.com/dtolnay/thiserror
+anyhow = "1"              # top-level error wrapper; ref: https://docs.rs/anyhow
+tracing = "0.1"           # structured logging; ref: https://tracing.rs
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
+
+base64 = "0.22"           # stdlib-style {encode,decode} for wire payloads
+# chrono: RFC3339 formatting for SBOM.GeneratedAt. Pinned to default-
+# features off + std/clock only (no serde integration — we format into
+# an owned String in the ipc layer).
+# Ref: https://docs.rs/chrono/latest/chrono/#features
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"    # pure Rust only — keeps auditing trivial
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

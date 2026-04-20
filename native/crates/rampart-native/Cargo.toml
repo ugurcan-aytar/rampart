@@ -1,0 +1,21 @@
+[package]
+name = "rampart-native"
+description = "rampart — npm lockfile parser + UDS IPC server (library crate)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+base64.workspace = true
+chrono.workspace = true
+
+[lints]
+workspace = true

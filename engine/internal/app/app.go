@@ -17,11 +17,21 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/api"
 	"github.com/ugurcan-aytar/rampart/engine/internal/config"
 	"github.com/ugurcan-aytar/rampart/engine/internal/events"
-	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
+	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
 	"github.com/ugurcan-aytar/rampart/engine/internal/trust"
+	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
+
+// defaultNativeSocket resolves RAMPART_NATIVE_SOCKET or falls back to
+// the Unix /tmp path rampart-native uses by default.
+func defaultNativeSocket() string {
+	if s := os.Getenv("RAMPART_NATIVE_SOCKET"); s != "" {
+		return s
+	}
+	return "/tmp/rampart-native.sock"
+}
 
 // App is the engine's runtime. Construct with New, drive with Run, release with Close.
 type App struct {
@@ -107,16 +117,30 @@ func (a *App) Close() error {
 	return a.storage.Close()
 }
 
-// runParseSBOM reads a lockfile from disk, parses it with the Go npm parser,
-// and writes the resulting SBOM as indented JSON to stdout.
-// Invoked via `engine parse-sbom [--component-ref ref] [--commit-sha sha] <path>`.
+// runParseSBOM reads a lockfile from disk, parses it with the selected
+// npm parser backend, and writes the resulting SBOM as indented JSON to
+// stdout.
+//
+// Invoked via:
+//   engine parse-sbom
+//       [--parser go|native]
+//       [--component-ref ref]
+//       [--commit-sha sha]
+//       [--native-socket /path]
+//       <lockfile>
+//
+// `--parser native` spawns the Rust sidecar's client against a running
+// rampart-native process; the socket path comes from --native-socket or
+// the RAMPART_NATIVE_SOCKET env var (matches the server default).
 func runParseSBOM(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("parse-sbom", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
+	parser := fs.String("parser", "go", "parser backend: go | native")
 	componentRef := fs.String("component-ref", "", "component reference (e.g. component:default/web-app)")
 	commitSHA := fs.String("commit-sha", "", "commit sha the SBOM was taken at")
+	nativeSocket := fs.String("native-socket", defaultNativeSocket(), "UDS path for rampart-native (parser=native only)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: rampart parse-sbom [--component-ref ref] [--commit-sha sha] <lockfile>")
+		fmt.Fprintln(os.Stderr, "usage: rampart parse-sbom [--parser go|native] [--component-ref ref] [--commit-sha sha] [--native-socket path] <lockfile>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -139,7 +163,16 @@ func runParseSBOM(ctx context.Context, args []string) error {
 		return fmt.Errorf("read %s: %w", path, err)
 	}
 
-	sbom, err := npm.NewParser().Parse(ctx, content, npm.LockfileMeta{
+	strategy := npm.Strategy(*parser)
+	strategyParser := npm.NewStrategyParser(
+		strategy,
+		npm.NewParser(),
+		native.New(*nativeSocket),
+	)
+	fmt.Fprintf(os.Stderr, "parse-sbom: strategy=%s socket=%s bytes=%d\n",
+		strategy, *nativeSocket, len(content))
+
+	sbom, err := strategyParser.Parse(ctx, content, npm.LockfileMeta{
 		SourcePath:   path,
 		ComponentRef: *componentRef,
 		CommitSHA:    *commitSHA,
