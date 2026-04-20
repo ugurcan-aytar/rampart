@@ -1,0 +1,13 @@
+{
+  "name": "old-format",
+  "version": "1.0.0",
+  "lockfileVersion": 2,
+  "requires": true,
+  "packages": {},
+  "dependencies": {
+    "axios": {
+      "version": "1.11.0",
+      "integrity": "sha512-v1-or-v2-format=="
+    }
+  }
+}
