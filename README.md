@@ -23,7 +23,7 @@ when a `shai-hulud`-class event is breaking on Hacker News at 3 a.m.:
    remediation log — `pin_version`, `rotate_secret`, `open_pr`,
    `notify`, `dismiss`. Audit-grade, not vibes-grade.
 
-The engine is Go; the optional Rust sidecar parses lockfiles over a
+The engine is Go; an optional Rust sidecar parses lockfiles over a
 Unix Domain Socket for deployments that want an extra layer of parser
 isolation (see [ADR-0005](./docs/decisions/0005-no-cgo-rust-via-uds.md)).
 Three consumers — a Backstage plugin, a GitHub Action, and a CLI —
@@ -60,9 +60,8 @@ the developer portal your engineers already open fifty times a day.
 
 ## Quickstart — pick your path
 
-All three paths are first-class. Each is **tested to work in
-under 5 minutes** on a fresh checkout with Go 1.24 and Docker
-installed.
+Each path runs in under 5 minutes on a fresh checkout with Go 1.24
+and Docker installed.
 
 ### Path 1 — Solo developer (CLI)
 
@@ -129,26 +128,57 @@ make demo-native         # axios scenario routed through the Rust sidecar
 make demo-down           # clean teardown
 ```
 
-## What ships in Phase 1
+## Features
 
-| Surface | Status | Notes |
-|---|---|---|
-| npm package-lock.json v3 parser | ✅ | `engine/sbom/npm` — byte-identical Go + Rust implementations |
-| SBOM ingest + retroactive match | ✅ | New SBOMs matched against every stored IoC |
-| IoC publish + forward match | ✅ | Packet-version, packet-range (semver), publisherAnomaly (Phase 2) |
-| Incident lifecycle | ✅ | State machine: pending → triaged → acknowledged → remediating → closed/dismissed |
-| Blast radius query | ✅ | O(IoCs × SBOMs) scan — Phase 2 bitmap index |
-| Remediation audit log | ✅ | Append-only, typed kind enum |
-| Server-Sent Events stream | ✅ | Five event types (`incident.opened`, …), heartbeat |
-| In-memory storage | ✅ | Single-node demo; Phase 2 ships Postgres |
-| Backstage frontend plugin | ✅ | `IncidentDashboard` + `IncidentDetail` routable extensions |
-| Backstage backend plugin | ✅ | Engine proxy + catalog-sync tick |
-| GitHub Action | ✅ | `integrations/github-action` — SBOM → SARIF upload |
-| Slack notifier | ✅ | SSE consumer, dry-run by default |
-| Pre-commit hook | ✅ | `integrations/precommit-hook` — validate before push |
-| Rust sidecar (opt-in) | ✅ | `--profile native`; defense-in-depth parser isolation, not a throughput win |
-| Docker Compose demo stack | ✅ | `make demo-axios` → full stack up in < 5 s cold |
-| CI/CD | ✅ | Ten GitHub Actions workflows (engine, native, parity, gen-check, backstage, integrations, codeql, e2e, dependency-review, release) |
+Parsing and ingestion:
+- npm `package-lock.json` v3 parser (byte-identical Go + Rust
+  implementations, parity-tested on every PR)
+- SBOM submission via `POST /v1/components/{ref}/sboms` with
+  retroactive matching against every stored IoC
+- Rust sidecar (opt-in via `docker compose --profile native`) —
+  defense-in-depth parser isolation, engine falls back to the Go
+  parser if the sidecar is unreachable
+
+Matching and incident lifecycle:
+- Three IoC kinds: `packageVersion` (exact), `packageRange`
+  (semver via Masterminds/semver), `publisherAnomaly` (wire shape
+  landed, detector on the roadmap)
+- Forward matching when an IoC is published, retroactive matching
+  when an SBOM is ingested; idempotent by `(IoCID, ComponentRef)`
+- Incident state machine: `pending → triaged → acknowledged →
+  remediating → closed`, with `dismissed` reachable from any
+  non-terminal state
+- Remediation audit log: append-only, typed kind enum
+  (`pin_version`, `rotate_secret`, `open_pr`, `notify`, `dismiss`)
+- Blast radius query (`POST /v1/blast-radius`) — given IoCs,
+  return affected component refs
+- Server-Sent Events stream (`GET /v1/stream`) broadcasts five
+  event types, with heartbeat framing for proxy compatibility
+
+Consumers:
+- CLI (`cli/cmd/rampart`) — scan a lockfile, emit ParsedSBOM /
+  SBOM / SARIF
+- GitHub Action (`integrations/github-action`) — lockfile → SARIF
+  → code-scanning upload
+- Slack notifier (`integrations/slack-notifier`) — SSE subscriber,
+  dry-run by default, real webhook behind `SLACK_WEBHOOK_URL`
+- Pre-commit hook (`integrations/precommit-hook`) — validate a
+  lockfile before it lands
+- Backstage frontend plugin — `IncidentDashboard` +
+  `IncidentDetail` routable extensions
+- Backstage backend plugin — `/api/rampart/v1/*` proxy +
+  `CatalogSync` tick
+
+Infrastructure:
+- Docker Compose demo stack (`make demo-axios` — 5 s cold boot)
+- Ten GitHub Actions workflows (engine, native, parity,
+  gen-check, backstage, integrations, codeql, e2e,
+  dependency-review, release) — every PR runs the right subset
+- OpenAPI contract (`schemas/openapi.yaml`) drives Go + TS
+  codegen; drift is a CI failure (`make gen-check`)
+- `goreleaser` + `cargo` cross-compile matrix + multi-arch
+  container images on `ghcr.io`, all cosign-signed with SBOM
+  attestation
 
 ## Architecture
 
@@ -167,7 +197,7 @@ make demo-down           # clean teardown
   │    matcher IoC vs SBOM                  │
   │    events  in-process SSE bus           │
   │    trust   policy evaluation            │
-  │    storage in-memory (Phase 2: pg)      │
+  │    storage in-memory                    │
   └──────┬──────────────────────────────────┘
          │ UDS (opt-in, ADR-0005)
          ▼
@@ -184,8 +214,8 @@ Drift is enforced at CI time by `make gen-check`.
 
 ## Production deployment notes
 
-This section is what `make demo-axios` deliberately doesn't cover —
-the rough edges you'll hit when deploying rampart for real.
+Rough edges `make demo-axios` deliberately doesn't cover — read
+before deploying rampart for real.
 
 **CORS + base URLs.** The frontend's `RampartClient` reads
 `rampart.baseUrl` and fetches the engine directly. In the demo stack
@@ -193,12 +223,13 @@ this is `http://localhost:8080` (browser-reachable). In production,
 point the frontend at your Backstage backend's proxy
 (`/api/rampart/v1/…`) — the `rampart-backend` plugin already mounts
 it. The engine's current CORS middleware is a wildcard for demo
-convenience; tighten for production.
+convenience; tighten it before exposing the engine to an untrusted
+network.
 
-**Storage is in-memory.** Phase 1 loses all state on restart. Postgres
-lands in Phase 2 — see [ROADMAP.md](./ROADMAP.md). Deploy behind a
-supervisor that can tolerate periodic restarts (k8s, nomad, etc.) in
-the meantime; don't rely on incident continuity across restarts.
+**Storage is in-memory.** The engine loses all state on restart.
+Deploy behind a supervisor that can tolerate periodic restarts (k8s,
+nomad, etc.); don't rely on incident continuity across restarts.
+Postgres is on the [roadmap](./ROADMAP.md).
 
 **Auth is guest.** Backstage ships with `auth.providers.guest`
 enabled; swap in a real provider (OIDC, GitHub, etc.) before exposing
@@ -206,10 +237,11 @@ the stack outside a trust boundary. The dev-harness `AutoSignInPage`
 bypass lives in `backstage/examples/app/packages/app/src/` — replace
 it with Backstage's `SignInPage` under your provider.
 
-**Image sizes.** The Backstage production image is ~770 MiB after
-the Phase 1 slimming pass. Further reductions (alpine base, more
-aggressive prune) are a Phase 2 ROI question; see the Dockerfile
-comments at `backstage/examples/app/Dockerfile`.
+**Image sizes.** The Backstage production image is ~773 MiB. Further
+reductions (alpine base, more aggressive prune) are on the
+[roadmap](./ROADMAP.md) but carry tradeoffs around better-sqlite3's
+native rebuild; see the Dockerfile comments at
+`backstage/examples/app/Dockerfile` for the current shape.
 
 **Release artifacts are cosign-signed.** Every tarball that leaves
 the release workflow carries an SBOM attestation + a cosign keyless
@@ -220,9 +252,10 @@ signature verifiable against the GitHub OIDC issuer. See
 ## Documentation
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — domain model, event flow, storage shape
-- [ROADMAP.md](./ROADMAP.md) — Phase 2 / 3 scope + reasoning
+- [ROADMAP.md](./ROADMAP.md) — what's coming next, grouped by user segment
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup, supply-chain rules, PR conventions
 - [SECURITY.md](./SECURITY.md) — threat model, disclosure policy, verification
+- [CHANGELOG.md](./CHANGELOG.md) — release notes
 - [DEPS.md](./DEPS.md) — every runtime dependency, justified
 - [docs/decisions/](./docs/decisions/) — 9 ADRs (cgo + UDS, Yarn 4, parser placement, enableScripts hardening, CI/CD pipeline)
 - [docs/benchmarks/sbom-parser.md](./docs/benchmarks/sbom-parser.md) — Go vs Rust parser throughput (honest numbers)
