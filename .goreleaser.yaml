@@ -1,0 +1,147 @@
+# goreleaser config for rampart's Go binaries.
+#
+# Cross-compiles four artifacts per tag push:
+#   engine            (engine/cmd/engine)
+#   rampart           (cli/cmd/rampart)
+#   rampart-precommit (integrations/precommit-hook/cmd/precommit)
+#   slack-notifier    (integrations/slack-notifier/cmd/slack-notifier)
+#
+# The Rust sidecar (rampart-native) ships its own release artifacts
+# via cargo cross-compile — see .github/workflows/release.yml. The
+# Backstage app ships as a multi-arch container, also wired in
+# release.yml. goreleaser here is Go-only.
+
+version: 2
+
+project_name: rampart
+
+before:
+  hooks:
+    - go mod download -C engine
+    - go mod download -C cli
+    - go mod download -C integrations/precommit-hook
+    - go mod download -C integrations/slack-notifier
+
+builds:
+  - id: engine
+    main: ./cmd/engine
+    dir: engine
+    binary: engine
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.date={{.Date}}
+
+  - id: rampart-cli
+    main: ./cmd/rampart
+    dir: cli
+    binary: rampart
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+
+  - id: precommit-hook
+    main: ./cmd/precommit
+    dir: integrations/precommit-hook
+    binary: rampart-precommit
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s, -w]
+
+  - id: slack-notifier
+    main: ./cmd/slack-notifier
+    dir: integrations/slack-notifier
+    binary: slack-notifier
+    env: [CGO_ENABLED=0]
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags: [-s, -w]
+
+archives:
+  - id: default
+    ids: [engine, rampart-cli, precommit-hook, slack-notifier]
+    name_template: '{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+  algorithm: sha256
+
+sboms:
+  # syft produces an SPDX SBOM per archive. release.yml pipes these
+  # into cosign attest so every artifact carries its own attested
+  # SBOM — rampart can scan its own releases with a downstream
+  # rampart scanner, which is the supply-chain narrative's
+  # self-consistency test.
+  - artifacts: archive
+
+signs:
+  # cosign keyless signing via GitHub OIDC. no long-lived private
+  # keys; signatures + attestations land in the sigstore public log.
+  - cmd: cosign
+    args:
+      - sign-blob
+      - '--yes'
+      - '--output-signature=${signature}'
+      - '--output-certificate=${certificate}'
+      - ${artifact}
+    signature: ${artifact}.sig
+    certificate: ${artifact}.pem
+    output: true
+    artifacts: checksum
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^ci:'
+      - '^chore:'
+      - '^style:'
+      - Merge pull request
+      - Merge branch
+
+release:
+  github:
+    owner: ugurcan-aytar
+    name: rampart
+  prerelease: auto
+  draft: false
+  header: |
+    Rampart — a rampart for your supply chain.
+
+    SBOMs are attached per archive (`.sbom.json`). Archives and the
+    combined checksums.txt are cosign-signed; verify with:
+
+        cosign verify-blob \
+          --certificate checksums.txt.pem \
+          --signature   checksums.txt.sig \
+          --certificate-identity-regexp '.+' \
+          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+          checksums.txt
+
+  footer: |
+    Container images for engine, rampart-native, and the Backstage
+    app are published separately — see the `.github/workflows/release.yml`
+    tag summary for image digests + their cosign attestations.

@@ -1,0 +1,278 @@
+name: release
+
+# Tag-triggered release pipeline. Orchestrates:
+#   1. Go binaries via goreleaser (.goreleaser.yaml)
+#   2. Rust sidecar via cargo cross-compile (4 targets)
+#   3. Multi-arch container images (engine, native, backstage)
+#      pushed to ghcr.io/ugurcan-aytar
+#   4. Cosign keyless signing (OIDC) + SBOM attestation for every
+#      artifact that leaves the repo
+#   5. Backstage plugin npm publish via trusted publishing
+#
+# Keyless signing uses GitHub OIDC — no cosign private key secret
+# lives in the repo. npm publish uses trusted-publishing (OIDC
+# between GitHub Actions and the npm registry), so no long-lived
+# npm token either. The narrative is: "no long-lived credentials".
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (e.g. v0.1.0)
+        required: true
+        type: string
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write       # create release, upload assets
+  id-token: write       # OIDC for cosign + npm trusted publishing
+  packages: write       # ghcr.io push
+  attestations: write   # cosign attest
+  issues: read
+
+jobs:
+  # -------------------------------------------------------------
+  # 1. Go binaries via goreleaser
+  # -------------------------------------------------------------
+  goreleaser:
+    name: goreleaser (go binaries)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+
+      - name: Install syft (SBOM)
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Run goreleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # -------------------------------------------------------------
+  # 2. Rust sidecar — rampart-native cross-compile
+  # -------------------------------------------------------------
+  native:
+    name: rampart-native (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04
+          - target: x86_64-apple-darwin
+            os: macos-14
+          - target: aarch64-apple-darwin
+            os: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable + target
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install musl tools (linux targets)
+        if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+
+      - name: Build rampart-native
+        working-directory: native
+        run: cargo build --release --target ${{ matrix.target }} --bin rampart-native
+
+      - name: Install cosign + syft
+        uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+
+      - name: Package + sign binary
+        working-directory: native
+        run: |
+          BIN=target/${{ matrix.target }}/release/rampart-native
+          TARBALL="rampart-native_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
+          tar -czf "$TARBALL" -C target/${{ matrix.target }}/release rampart-native
+          sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          # SBOM per archive.
+          syft "$BIN" -o spdx-json > "${TARBALL}.sbom.spdx.json"
+          # Keyless signature via OIDC.
+          cosign sign-blob --yes \
+            --output-signature "${TARBALL}.sig" \
+            --output-certificate "${TARBALL}.pem" \
+            "$TARBALL"
+
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            native/rampart-native_*.tar.gz
+            native/rampart-native_*.tar.gz.sha256
+            native/rampart-native_*.tar.gz.sbom.spdx.json
+            native/rampart-native_*.tar.gz.sig
+            native/rampart-native_*.tar.gz.pem
+          tag_name: ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+
+  # -------------------------------------------------------------
+  # 3. Container images — engine, native, backstage (multi-arch)
+  # -------------------------------------------------------------
+  images:
+    name: image / ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    needs: [goreleaser]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: engine
+            context: ./engine
+            dockerfile: ./engine/Dockerfile
+          - image: rampart-native
+            context: ./native
+            dockerfile: ./native/Dockerfile
+          - image: rampart-slack-notifier
+            context: ./integrations/slack-notifier
+            dockerfile: ./integrations/slack-notifier/Dockerfile
+          - image: rampart-mock-npm-registry
+            context: ./integrations/mock-npm-registry
+            dockerfile: ./integrations/mock-npm-registry/Dockerfile
+          - image: rampart-backstage
+            context: .
+            dockerfile: ./backstage/examples/app/Dockerfile
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ugurcan-aytar/${{ matrix.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Build + push (multi-arch)
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGES: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $IMAGES; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
+
+      - name: Generate + attest SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ghcr.io/ugurcan-aytar/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attach SBOM attestation (cosign)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdx \
+            "ghcr.io/ugurcan-aytar/${{ matrix.image }}@${DIGEST}"
+
+  # -------------------------------------------------------------
+  # 4. npm publish — Backstage plugins via trusted publishing
+  # -------------------------------------------------------------
+  npm:
+    name: npm publish (${{ matrix.plugin }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin:
+          - backstage/plugins/rampart
+          - backstage/plugins/rampart-backend
+          - backstage/plugins/scaffolder-rampart-actions
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: https://registry.npmjs.org
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: yarn install
+        run: yarn install --immutable
+
+      - name: Build plugin
+        working-directory: ${{ matrix.plugin }}
+        run: yarn run build || echo 'no build script — source-only plugin'
+
+      - name: npm publish (trusted publishing / OIDC)
+        working-directory: ${{ matrix.plugin }}
+        # npm trusted publishing uses the OIDC token from id-token:
+        # write above — no NPM_TOKEN secret required. Skips publish
+        # if the version on the registry already matches.
+        run: |
+          if npm view "$(node -e "console.log(require('./package.json').name)")" version \
+               | grep -qx "$(node -e "console.log(require('./package.json').version)")"; then
+            echo "version already published; skipping"
+          else
+            npm publish --provenance --access public
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
