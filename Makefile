@@ -82,20 +82,50 @@ test: ## Run all tests (Go, Rust, TS). (Adım 2+)
 lint: ## Run all linters (golangci-lint, eslint, clippy). (Adım 2+)
 	@echo "Not yet wired — see FIRST.md Adım 2."
 
-# --- Demo stack (Adım 7) ---------------------------------------------------
+# --- Demo stack (Adım 7.5) -------------------------------------------------
+#
+# Default profile brings up engine + mock-npm-registry + slack-notifier.
+# Backstage is not in the compose stack (see ADR deferral note in
+# docker-compose.yml) — run `yarn workspace rampart dev` in a second
+# terminal and open http://localhost:3000 to see the IncidentDashboard.
 
-.PHONY: demo demo-axios demo-shai-hulud demo-go-only
-demo: ## Bring up the full demo stack. (Adım 7)
-	@echo "Not yet wired — see FIRST.md Adım 7."
+.PHONY: demo demo-axios demo-shai-hulud demo-vercel demo-native demo-down
+demo: ## Bring up the demo stack + seed the catalog, leave it running.
+	docker compose up -d --build
+	./scripts/seed-catalog.sh
+	@echo ""
+	@echo "demo is up."
+	@echo "  engine:            http://localhost:8080"
+	@echo "  mock-npm-registry: http://localhost:8081"
+	@echo "  slack-notifier:    docker compose logs -f slack-notifier"
+	@echo ""
+	@echo "Next: pick a scenario —"
+	@echo "  make demo-axios       2026-03-31 axios compromise"
+	@echo "  make demo-shai-hulud  2026-04-18 rampage-* worm"
+	@echo "  make demo-vercel      2026-04-19 Vercel OAuth leak"
+	@echo ""
+	@echo "  For the Backstage UI, run in a second terminal:"
+	@echo "    yarn workspace rampart dev"
+	@echo "  then open http://localhost:3000."
 
-demo-axios: ## Replay the 31 March 2026 axios compromise. (Adım 7)
-	@echo "Not yet wired — see FIRST.md Adım 7."
+demo-axios: ## Replay the 2026-03-31 axios compromise against the running stack.
+	docker compose up -d --build
+	./scripts/demo-scenarios/axios-compromise.sh
 
-demo-shai-hulud: ## Replay the Shai-Hulud worm scenario. (Adım 7)
-	@echo "Not yet wired — see FIRST.md Adım 7."
+demo-shai-hulud: ## Replay the 2026-04-18 rampage-* worm against the running stack.
+	docker compose up -d --build
+	./scripts/demo-scenarios/shai-hulud.sh
 
-demo-go-only: ## Demo with rampart-native off (Go parser fallback). (Adım 7)
-	@echo "Not yet wired — see FIRST.md Adım 7."
+demo-vercel: ## Replay the 2026-04-19 Vercel OAuth leak against the running stack.
+	docker compose up -d --build
+	./scripts/demo-scenarios/vercel-oauth.sh
+
+demo-native: ## Same as demo-axios but routes parsing through the Rust sidecar (--profile native).
+	RAMPART_PARSER_STRATEGY=native docker compose --profile native up -d --build
+	./scripts/demo-scenarios/axios-compromise.sh
+
+demo-down: ## Tear the demo stack down (all profiles) and prune its volumes.
+	docker compose --profile native --profile full down -v --remove-orphans
 
 # --- CI umbrella (Adım 8) --------------------------------------------------
 
