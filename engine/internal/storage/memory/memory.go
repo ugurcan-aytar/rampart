@@ -160,6 +160,33 @@ func (s *Store) ListIncidents(ctx context.Context) ([]domain.Incident, error) {
 	return out, ctx.Err()
 }
 
+// AppendRemediation atomically appends to an incident's Remediations
+// slice. Holds the write lock across the read-modify-write so two
+// concurrent appends can't lose an entry.
+func (s *Store) AppendRemediation(ctx context.Context, incidentID string, r domain.Remediation) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	inc, ok := s.incidents[incidentID]
+	if !ok {
+		return storage.ErrNotFound
+	}
+	inc.Remediations = append(inc.Remediations, r)
+	s.incidents[incidentID] = inc
+	return ctx.Err()
+}
+
+func (s *Store) ListRemediations(ctx context.Context, incidentID string) ([]domain.Remediation, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	inc, ok := s.incidents[incidentID]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	out := make([]domain.Remediation, len(inc.Remediations))
+	copy(out, inc.Remediations)
+	return out, ctx.Err()
+}
+
 func (s *Store) UpsertPublisher(ctx context.Context, p domain.Publisher) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

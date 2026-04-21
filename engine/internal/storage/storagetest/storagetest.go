@@ -22,6 +22,7 @@ func Run(t *testing.T, newStore func() storage.Storage) {
 	t.Run("SBOM", func(t *testing.T) { testSBOM(t, newStore) })
 	t.Run("IoC", func(t *testing.T) { testIoC(t, newStore) })
 	t.Run("Incident", func(t *testing.T) { testIncident(t, newStore) })
+	t.Run("Remediation", func(t *testing.T) { testRemediation(t, newStore) })
 	t.Run("Publisher", func(t *testing.T) { testPublisher(t, newStore) })
 }
 
@@ -145,6 +146,51 @@ func testIncident(t *testing.T, newStore func() storage.Storage) {
 		"snapshot must remain frozen after state transition")
 
 	_, err = s.GetIncident(ctx, "missing")
+	require.True(t, errors.Is(err, storage.ErrNotFound))
+}
+
+func testRemediation(t *testing.T, newStore func() storage.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	s := newStore()
+	defer s.Close()
+
+	now := time.Now().UTC()
+	inc := domain.Incident{
+		ID: "inc-2", IoCID: "ioc-2", State: domain.StatePending,
+		OpenedAt: now, LastTransitionedAt: now,
+	}
+	require.NoError(t, s.UpsertIncident(ctx, inc))
+
+	r1 := domain.Remediation{
+		ID: "r1", IncidentID: inc.ID,
+		Kind: domain.RemediationNotify, ExecutedAt: now,
+		ActorRef: "user:alice",
+	}
+	require.NoError(t, s.AppendRemediation(ctx, inc.ID, r1))
+
+	r2 := domain.Remediation{
+		ID: "r2", IncidentID: inc.ID,
+		Kind: domain.RemediationPinVersion, ExecutedAt: now.Add(time.Minute),
+		ActorRef: "user:bob",
+	}
+	require.NoError(t, s.AppendRemediation(ctx, inc.ID, r2))
+
+	rs, err := s.ListRemediations(ctx, inc.ID)
+	require.NoError(t, err)
+	require.Len(t, rs, 2)
+	require.Equal(t, "r1", rs[0].ID, "append-only: order must match write order")
+	require.Equal(t, "r2", rs[1].ID)
+
+	// Remediations must also appear on the stored incident — that's how
+	// GetIncident hydrates them in one round-trip.
+	got, err := s.GetIncident(ctx, inc.ID)
+	require.NoError(t, err)
+	require.Len(t, got.Remediations, 2)
+
+	_, err = s.ListRemediations(ctx, "missing")
+	require.True(t, errors.Is(err, storage.ErrNotFound))
+	err = s.AppendRemediation(ctx, "missing", r1)
 	require.True(t, errors.Is(err, storage.ErrNotFound))
 }
 

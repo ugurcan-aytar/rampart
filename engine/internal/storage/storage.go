@@ -33,6 +33,12 @@ type Storage interface {
 	GetIncident(ctx context.Context, id string) (*domain.Incident, error)
 	ListIncidents(ctx context.Context) ([]domain.Incident, error)
 
+	// Remediation — append-only audit log. Each entry is attached to an
+	// Incident; storage backends are expected to append atomically so
+	// concurrent actors don't clobber each other's entries.
+	AppendRemediation(ctx context.Context, incidentID string, r domain.Remediation) error
+	ListRemediations(ctx context.Context, incidentID string) ([]domain.Remediation, error)
+
 	// Publisher
 	UpsertPublisher(ctx context.Context, p domain.Publisher) error
 	GetPublisher(ctx context.Context, ecosystem, name string) (*domain.Publisher, error)
