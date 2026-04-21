@@ -1,2 +1,25 @@
-# Every change requires review by the project owner.
-* @ugurcan-aytar
+# CODEOWNERS for rampart.
+#
+# Branch protection (set in GitHub repo settings) should require
+# CODEOWNERS review on every PR to main; this file keeps the review
+# assignment machine-readable. Single-owner for now; Phase 2
+# delegates sub-trees as the contributor surface grows.
+
+*                                         @ugurcan-aytar
+
+# Schema / contract — any edit is load-bearing for every codegen
+# consumer. `make gen-check` already enforces drift, but CODEOWNERS
+# adds a human gate on intent.
+/schemas/                                 @ugurcan-aytar
+/engine/api/gen/                          @ugurcan-aytar
+/backstage/plugins/rampart/src/api/gen/   @ugurcan-aytar
+
+# Architecture decisions — no silent ADR amendments.
+/docs/decisions/                          @ugurcan-aytar
+
+# Supply-chain gates. Changes here affect every downstream build.
+/.yarnrc.yml                              @ugurcan-aytar
+/.github/workflows/                       @ugurcan-aytar
+/.github/dependabot.yml                   @ugurcan-aytar
+/native/deny.toml                         @ugurcan-aytar
+/DEPS.md                                  @ugurcan-aytar

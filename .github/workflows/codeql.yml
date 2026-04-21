@@ -1,0 +1,56 @@
+name: codeql
+
+# CodeQL static analysis over Go + JavaScript/TypeScript + GitHub
+# Actions. Rust is covered by cargo-audit + cargo-deny (native.yml),
+# since CodeQL's Rust support is still experimental.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly scan catches new rules against unchanged code. Monday
+    # 04:00 UTC fits into the shared-runner availability window.
+    - cron: '0 4 * * 1'
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: analyze (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [go, javascript-typescript, actions]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        if: matrix.language == 'go'
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # Extended query suite pulls in the security-and-quality
+          # pack; the default suite alone misses several Go patterns
+          # rampart's HTTP handlers benefit from (e.g. request-body
+          # unbounded-read detection).
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: /language:${{ matrix.language }}

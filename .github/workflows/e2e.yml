@@ -1,0 +1,91 @@
+name: e2e
+
+# End-to-end tests against the live demo stack. Brings up docker
+# compose with the default profile (engine + mock-npm + slack +
+# backstage), runs `scripts/demo-scenarios/axios-compromise.sh`,
+# then drives Playwright headlessly against the containerized
+# Backstage. Traces + screenshots upload on failure for post-mortem.
+#
+# Heavier than engine/native/parity — ~10 min cold. Runs on main
+# and PR only; nightly ad-hoc via workflow_dispatch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  axios-flow:
+    name: axios compromise e2e
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: yarn install
+        run: yarn install --immutable
+
+      - name: docker compose build
+        run: docker compose build
+
+      - name: docker compose up (default profile)
+        run: docker compose up -d
+
+      - name: Wait for engine + backstage
+        run: |
+          ./scripts/wait-for-engine.sh
+          timeout 120 bash -c 'until curl -sSf -o /dev/null http://localhost:3000/; do sleep 3; done'
+
+      - name: Run axios-compromise scenario
+        run: ./scripts/demo-scenarios/axios-compromise.sh
+
+      - name: Install Playwright browser
+        working-directory: e2e
+        run: yarn exec playwright install chromium --with-deps
+
+      - name: Run Playwright axios-flow + native-fallback
+        working-directory: e2e
+        run: yarn exec playwright test
+
+      - name: Capture engine + slack logs
+        if: always()
+        run: |
+          mkdir -p /tmp/rampart-logs
+          docker compose logs engine > /tmp/rampart-logs/engine.log 2>&1 || true
+          docker compose logs slack-notifier > /tmp/rampart-logs/slack-notifier.log 2>&1 || true
+          docker compose logs backstage > /tmp/rampart-logs/backstage.log 2>&1 || true
+          docker compose logs mock-npm-registry > /tmp/rampart-logs/mock-npm.log 2>&1 || true
+
+      - name: Upload logs + traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-logs
+          path: |
+            /tmp/rampart-logs/
+            e2e/test-results/
+            e2e/playwright-report/
+          retention-days: 7
+
+      - name: docker compose down
+        if: always()
+        run: docker compose --profile native --profile full down -v --remove-orphans || true

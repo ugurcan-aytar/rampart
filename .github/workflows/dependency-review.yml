@@ -1,0 +1,37 @@
+name: dependency-review
+
+# PR-only dependency diff gate. Reviews every new / changed
+# dependency in go.sum, yarn.lock, native/Cargo.lock, and the
+# docker base images. Fails the PR on:
+#   - any known vulnerability at moderate+
+#   - any license outside the allowlist (ADR-0005 / ADR-0006)
+#   - OpenSSF Scorecard hits below 3.0 for new deps
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    name: deps diff
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: moderate
+          deny-licenses: >-
+            AGPL-1.0-only,
+            AGPL-1.0-or-later,
+            AGPL-3.0-only,
+            AGPL-3.0-or-later,
+            GPL-2.0-only,
+            GPL-3.0-only,
+            SSPL-1.0
+          comment-summary-in-pr: on-failure

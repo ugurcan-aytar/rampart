@@ -1,0 +1,90 @@
+version: 2
+
+# Dependency auto-update policy. Grouped where sensible to keep PR
+# noise down; separate ecosystems where a grouped update would
+# hide a semantic upgrade (e.g. backstage minor bumps that require
+# yarn dedupe).
+
+updates:
+  # --- Go modules ---
+  - package-ecosystem: gomod
+    directory: /engine
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      go-backstage:
+        patterns: ['github.com/oklog/*', 'github.com/Masterminds/*']
+      go-test-tooling:
+        patterns: ['github.com/stretchr/testify']
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: gomod
+    directory: /cli
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: gomod
+    directory: /integrations/slack-notifier
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: gomod
+    directory: /integrations/precommit-hook
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: gomod
+    directory: /integrations/mock-npm-registry
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 3
+
+  # --- Node / Yarn workspaces ---
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    versioning-strategy: increase
+    groups:
+      backstage-core:
+        patterns: ['@backstage/*']
+      backstage-mui:
+        patterns: ['@mui/*', '@emotion/*']
+      react:
+        patterns: ['react', 'react-dom', 'react-router-dom', '@types/react*']
+    open-pull-requests-limit: 10
+
+  # --- Rust crates ---
+  - package-ecosystem: cargo
+    directory: /native
+    schedule: { interval: weekly, day: monday }
+    groups:
+      tokio:
+        patterns: ['tokio*']
+      serde:
+        patterns: ['serde*']
+    open-pull-requests-limit: 5
+
+  # --- Docker base images ---
+  - package-ecosystem: docker
+    directory: /engine
+    schedule: { interval: weekly, day: monday }
+  - package-ecosystem: docker
+    directory: /integrations/mock-npm-registry
+    schedule: { interval: weekly, day: monday }
+  - package-ecosystem: docker
+    directory: /integrations/slack-notifier
+    schedule: { interval: weekly, day: monday }
+  - package-ecosystem: docker
+    directory: /native
+    schedule: { interval: weekly, day: monday }
+  - package-ecosystem: docker
+    directory: /backstage/examples/app
+    schedule: { interval: weekly, day: monday }
+
+  # --- GitHub Actions (critical: this is how pinact SHA refs stay current) ---
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    open-pull-requests-limit: 5
