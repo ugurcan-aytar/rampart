@@ -128,7 +128,14 @@ jobs:
           BIN=target/${{ matrix.target }}/release/rampart-native
           TARBALL="rampart-native_${{ github.ref_name }}_${{ matrix.target }}.tar.gz"
           tar -czf "$TARBALL" -C target/${{ matrix.target }}/release rampart-native
-          sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          # macOS runners ship `shasum -a 256` (Perl) and Linux
+          # runners ship `sha256sum` (coreutils). Both emit the
+          # canonical "<hash>  <file>" format that `-c` understands.
+          if command -v sha256sum >/dev/null; then
+            sha256sum "$TARBALL" > "${TARBALL}.sha256"
+          else
+            shasum -a 256 "$TARBALL" > "${TARBALL}.sha256"
+          fi
           # SBOM per archive.
           syft "$BIN" -o spdx-json > "${TARBALL}.sbom.spdx.json"
           # Keyless signature via OIDC.
