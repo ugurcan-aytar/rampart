@@ -28,7 +28,7 @@ servers:
 
 tags:
   - name: health
-    description: Liveness / readiness probes.
+    description: Liveness / readiness probes for the engine.
   - name: components
     description: Component catalog mirrored from Backstage.
   - name: sboms
