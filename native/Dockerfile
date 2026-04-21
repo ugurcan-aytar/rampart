@@ -13,7 +13,7 @@
 # TARGETARCH is Docker's automatic per-platform build-arg: `amd64`
 # or `arm64` on the platforms we publish.
 
-FROM busybox:1.36 AS scratchdir
+FROM busybox:1.37 AS scratchdir
 # Pre-stage the UDS directory with nonroot ownership. A named volume
 # mounted over /var/run/rampart is seeded from the image's contents
 # on first use, so pre-creating the dir here survives the mount.
