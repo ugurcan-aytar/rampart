@@ -1,0 +1,16 @@
+# Repo-root .dockerignore already trims most of the tree; this file
+# adds app-specific excludes so the build context stays minimal even
+# when someone runs `docker build` with the context at examples/app/.
+node_modules/
+**/node_modules/
+**/dist/
+**/dist-types/
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/unplugged/
+.yarn/build-state.yml
+coverage/
+test-results/
+playwright-report/
+*.log
+.DS_Store

@@ -16,6 +16,8 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "scripts": {
+    "build": "backstage-cli package build",
+    "clean": "backstage-cli package clean",
     "typecheck": "tsc --noEmit",
     "lint": "backstage-cli package lint",
     "test": "backstage-cli package test --watch=false --passWithNoTests"

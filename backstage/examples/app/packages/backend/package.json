@@ -1,0 +1,31 @@
+{
+  "name": "backend",
+  "version": "0.1.0",
+  "private": true,
+  "backstage": {
+    "role": "backend"
+  },
+  "main": "dist/index.cjs.js",
+  "scripts": {
+    "build": "backstage-cli package build",
+    "build-image": "backstage-cli package build-image",
+    "start": "backstage-cli package start",
+    "clean": "backstage-cli package clean",
+    "test": "backstage-cli package test",
+    "lint": "backstage-cli package lint"
+  },
+  "dependencies": {
+    "@backstage/backend-defaults": "^0.5.0",
+    "@backstage/config": "^1.2.0",
+    "@backstage/plugin-app-backend": "^0.4.0",
+    "@ugurcan-aytar/backstage-plugin-rampart-backend": "workspace:^"
+  },
+  "devDependencies": {
+    "@backstage/cli": "^0.29.0",
+    "@types/node": "20.14.15",
+    "typescript": "5.6.3"
+  },
+  "files": [
+    "dist"
+  ]
+}

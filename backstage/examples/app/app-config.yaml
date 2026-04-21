@@ -1,5 +1,5 @@
 app:
-  title: rampart demo
+  title: rampart
   baseUrl: http://localhost:3000
 
 organization:
@@ -15,9 +15,22 @@ backend:
     origin: http://localhost:3000
     methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
     credentials: true
+  # In-memory dev database keeps the stack single-process; Phase 2 lands
+  # postgres when the engine gains a real storage backend.
+  database:
+    client: better-sqlite3
+    connection: ':memory:'
 
-# rampart-specific block — consumed by both plugin-rampart (frontend) and
-# plugin-rampart-backend (server-side proxy + catalog sync).
+auth:
+  environment: development
+  # Guest auth is sufficient for the demo. Production deployments swap
+  # in a real provider (OIDC, GitHub, etc.) — see the AutoSignInPage
+  # component in packages/app/src/ for the dev harness bypass.
+  providers:
+    guest: {}
+
+# rampart-specific block — consumed by both plugin-rampart (frontend)
+# and plugin-rampart-backend (server-side proxy + catalog sync).
 rampart:
   baseUrl: http://localhost:8080
   catalogSyncInterval: 30m

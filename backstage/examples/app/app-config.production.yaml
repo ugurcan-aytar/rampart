@@ -1,0 +1,28 @@
+# Production overrides — applied on top of app-config.yaml when the
+# Backstage container starts. docker-compose.yml passes
+# --config app-config.yaml --config app-config.production.yaml to the
+# backend binary, so these keys win.
+#
+# The host-side port mapping is 3000:7007 (compose file): the
+# container listens on 7007 internally, the browser hits localhost:3000.
+
+app:
+  baseUrl: ${APP_CONFIG_app_baseUrl}
+  title: rampart
+
+backend:
+  baseUrl: ${APP_CONFIG_backend_baseUrl}
+  listen:
+    port: 7007
+  csp:
+    connect-src: ["'self'", 'http:', 'https:']
+  cors:
+    origin: ${APP_CONFIG_app_baseUrl}
+    methods: [GET, HEAD, PATCH, POST, PUT, DELETE]
+    credentials: true
+
+# Pointed at the compose-DNS name — engine:8080 inside the bridge
+# network. Override via APP_CONFIG_rampart_baseUrl in compose.
+rampart:
+  baseUrl: ${APP_CONFIG_rampart_baseUrl}
+  catalogSyncInterval: 30m

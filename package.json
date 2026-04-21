@@ -16,6 +16,7 @@
   "workspaces": [
     "backstage/plugins/*",
     "backstage/examples/app",
+    "backstage/examples/app/packages/*",
     "e2e"
   ]
 }
