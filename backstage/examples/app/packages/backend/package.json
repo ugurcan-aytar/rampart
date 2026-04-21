@@ -15,7 +15,7 @@
     "lint": "backstage-cli package lint"
   },
   "dependencies": {
-    "@backstage/backend-defaults": "^0.5.0",
+    "@backstage/backend-defaults": "^0.12.2",
     "@backstage/config": "^1.2.0",
     "@backstage/plugin-app-backend": "^0.4.0",
     "@ugurcan-aytar/backstage-plugin-rampart-backend": "workspace:^"
