@@ -4,7 +4,7 @@
 # the binary into dry-run mode (logs the JSON payload instead of
 # POSTing it).
 
-FROM golang:1.23-alpine AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /src
 
 COPY go.mod go.sum ./

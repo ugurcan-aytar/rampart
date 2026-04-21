@@ -49,8 +49,12 @@ jobs:
         run: corepack enable
 
       - name: Supply-chain gate — enableScripts must be false
+        # Yarn 4 prints ANSI color codes even in non-TTY contexts,
+        # so we strip them before the string comparison. FORCE_COLOR=0
+        # is ignored by Yarn; sed is the reliable fallback.
         run: |
-          actual=$(yarn config get enableScripts)
+          raw=$(yarn config get enableScripts)
+          actual=$(printf '%s' "$raw" | sed 's/\x1b\[[0-9;]*m//g' | tr -d '[:space:]')
           if [ "$actual" != "false" ]; then
             echo "FAIL: yarn config enableScripts=$actual (expected false)"
             exit 1

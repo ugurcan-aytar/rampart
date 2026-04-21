@@ -1,6 +1,6 @@
 module github.com/ugurcan-aytar/rampart/engine
 
-go 1.23
+go 1.24
 
 require (
 	github.com/getkin/kin-openapi v0.127.0

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 # Engine image — multi-stage, distroless-static, non-root.
 
-FROM golang:1.23-alpine AS build
+FROM golang:1.24-alpine AS build
 WORKDIR /src
 
 # Dependencies first for layer caching.
