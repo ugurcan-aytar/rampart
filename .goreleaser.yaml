@@ -71,16 +71,40 @@ builds:
     ldflags: [-s, -w]
 
 archives:
-  - id: default
-    ids: [engine, rampart-cli, precommit-hook, slack-notifier]
-    name_template: '{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+  # One archive per binary id. goreleaser rejects a single archive
+  # that mixes build ids with different platform sets (engine +
+  # slack-notifier are linux/darwin-only; rampart-cli +
+  # precommit-hook also ship windows), so we scope each archive to
+  # its own id and platform set.
+  - id: engine
+    ids: [engine]
+    name_template: 'engine_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    files: [LICENSE, README.md]
+
+  - id: rampart-cli
+    ids: [rampart-cli]
+    name_template: 'rampart_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
     formats: [tar.gz]
     format_overrides:
       - goos: windows
         formats: [zip]
-    files:
-      - LICENSE
-      - README.md
+    files: [LICENSE, README.md]
+
+  - id: precommit-hook
+    ids: [precommit-hook]
+    name_template: 'rampart-precommit_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files: [LICENSE, README.md]
+
+  - id: slack-notifier
+    ids: [slack-notifier]
+    name_template: 'slack-notifier_{{ .Version }}_{{ .Os }}_{{ .Arch }}'
+    formats: [tar.gz]
+    files: [LICENSE, README.md]
 
 checksum:
   name_template: checksums.txt
