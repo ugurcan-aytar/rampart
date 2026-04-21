@@ -36,6 +36,35 @@ e2e/test-results/
 e2e/playwright-report/
 e2e/blob-report/
 
+# Unit + integration test artefacts — none of these need to ride into
+# the Docker build context. The Dockerfile never touches them, but
+# COPYing backstage/plugins/**/* wholesale otherwise drags them along.
+**/__tests__/
+**/__mocks__/
+**/*.test.ts
+**/*.test.tsx
+**/*.test.js
+**/*.spec.ts
+**/*.spec.tsx
+**/*.spec.js
+**/jest.config.*
+**/jest.setup.*
+
+# Storybook — dev-only surface, zero runtime relevance.
+**/.storybook/
+**/*.stories.ts
+**/*.stories.tsx
+
+# Generated source maps live next to dist/ entries and cost ~7 MiB
+# of frontend bundle weight with zero runtime use. Keep them in git
+# for local debug; exclude from the Docker build context.
+**/*.map
+
+# Markdown + changelogs — Backstage plugins ship per-package README
+# and CHANGELOG files that the runtime doesn't read.
+**/CHANGELOG.md
+**/*.md
+
 # Local generated fixtures (huge benchmark lockfiles, seeded on demand)
 engine/testdata/lockfiles/medium-*-pkgs.json
 engine/testdata/lockfiles/large-*-pkgs.json

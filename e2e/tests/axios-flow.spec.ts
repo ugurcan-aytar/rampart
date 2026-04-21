@@ -2,20 +2,19 @@ import { expect, test } from '@playwright/test';
 
 /**
  * axios-flow.spec.ts — end-to-end replay of the 2026-03-31 axios
- * supply-chain compromise, exercising every real piece of rampart:
+ * supply-chain compromise against the production demo stack:
  *
  *   1. Hit the engine HTTP API via fetch (scenario has already been
  *      replayed by `make demo-axios`; we assert 2 incidents exist).
- *   2. Open the Backstage IncidentDashboard in headless Chrome and
- *      confirm it renders those same two incidents.
+ *   2. Open the containerized Backstage IncidentDashboard in headless
+ *      Chrome and confirm it renders those same two incidents.
  *   3. Confirm the slack-notifier has seen the broadcast — proved
  *      indirectly via the engine's /v1/incidents count (slack-notifier
  *      subscribes to /v1/stream inside the compose network; we can't
  *      query its log from the browser).
  *
- * Prerequisite: `make demo-axios` already ran + `yarn workspace
- * rampart dev` is serving http://localhost:3000. Without both, the
- * test fails fast with a clear message from the first fetch.
+ * Prerequisite: `make demo-axios` leaves the stack up. The Backstage
+ * service is the production container (not the dev harness).
  */
 const ENGINE_URL = process.env.ENGINE_URL ?? 'http://localhost:8080';
 
@@ -41,26 +40,28 @@ test.describe('axios compromise demo flow', () => {
   });
 
   test('Backstage IncidentDashboard renders the same incidents', async ({ page }) => {
-    // Use the dev harness URL. Adım 5.1's AutoSignInPage flow bypasses
-    // the interactive sign-in so we load straight into the dashboard.
-    // Retry the initial navigation once if the first attempt lands
-    // during plugin-app-backend's bootstrap window (the backend
-    // briefly answers / with 503 "Service has not started up yet"
-    // before the app plugin finishes mounting). waitUntil: networkidle
-    // gives the SPA bundle a chance to finish its initial fetch graph
-    // before assertions fire.
-    let response = await page.goto('/', { waitUntil: 'networkidle' });
-    if (!response?.ok()) {
-      await page.waitForTimeout(5_000);
-      response = await page.goto('/', { waitUntil: 'networkidle' });
-    }
-    expect(response?.ok(), 'Backstage dev server must be up at ' + (process.env.BACKSTAGE_URL ?? 'http://localhost:3000')).toBeTruthy();
+    // AutoSignInPage bypasses the interactive Guest sign-in so we
+    // load straight into the dashboard. The image-slimming refactor
+    // (Dockerfile prune stage + no chown -R penalty) brought cold
+    // boot to ~1 s; a single clean navigation is reliable now.
+    //
+    // waitUntil: 'domcontentloaded' NOT 'networkidle': the dashboard
+    // opens a long-lived EventSource to /v1/stream on mount, so
+    // networkidle never fires — the test would always time out on
+    // the 60s suite window waiting for an idle that can't happen.
+    const response = await page.goto('/', { waitUntil: 'domcontentloaded' });
+    expect(
+      response?.ok(),
+      'Backstage production container must be up at ' +
+        (process.env.BACKSTAGE_URL ?? 'http://localhost:3000'),
+    ).toBeTruthy();
 
     // The dashboard renders under the header "Supply-chain incidents"
     // (Adım 5.1 convention); wait for it before asserting row content.
-    // 90s is generous — CI's cold Backstage container + first-request
-    // plugin-app-backend warmup is slower than a dev-harness spin-up.
-    await expect(page.getByText('Supply-chain incidents')).toBeVisible({ timeout: 90_000 });
+    // 30 s is the realistic window — the React bundle fetches
+    // /api/config.json + the initial /v1/incidents page before the
+    // table settles.
+    await expect(page.getByText('Supply-chain incidents')).toBeVisible({ timeout: 30_000 });
 
     // The IncidentDashboard table exposes ID / STATE / OPENED / IOC
     // columns — component names live in the detail view. Asserting on
