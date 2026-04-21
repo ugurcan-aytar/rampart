@@ -118,7 +118,11 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
-          version: v1.62.2
+          # v1.62 is built against go 1.23 and fails `typecheck` on
+          # packages that declare `go 1.24` in their go.mod (which
+          # we now do). v1.64.x added 1.24 support. Staying on the
+          # v1 line — v2.x has a breaking config-file format.
+          version: v1.64.6
           working-directory: engine
           args: --timeout=5m
 
