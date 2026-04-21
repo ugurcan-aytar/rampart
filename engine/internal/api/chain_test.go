@@ -176,7 +176,7 @@ func ptrString(s string) *string { return &s }
 
 type eventFilter func(domain.DomainEvent) bool
 
-func isSBOMIngested(e domain.DomainEvent) bool  { _, ok := e.(domain.SBOMIngestedEvent); return ok }
+func isSBOMIngested(e domain.DomainEvent) bool { _, ok := e.(domain.SBOMIngestedEvent); return ok }
 func isIncidentOpened(e domain.DomainEvent) bool {
 	_, ok := e.(domain.IncidentOpenedEvent)
 	return ok

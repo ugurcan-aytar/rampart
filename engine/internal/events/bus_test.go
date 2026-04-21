@@ -68,7 +68,7 @@ func TestBus_CancelClosesChannelAndRemovesSubscriber(t *testing.T) {
 	require.Equal(t, 0, bus.SubscriberCount())
 }
 
-func TestBus_CancelIsIdempotent(t *testing.T) {
+func TestBus_CancelIsIdempotent(_ *testing.T) {
 	bus := events.NewBus(4)
 	_, cancel := bus.Subscribe(context.Background())
 	cancel()

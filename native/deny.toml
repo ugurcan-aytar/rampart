@@ -39,9 +39,14 @@ confidence-threshold = 0.93
 
 [bans]
 multiple-versions = "warn"
+# Third-party `*` version specs are a drift risk and stay banned.
+# Workspace sibling path deps (rampart-native-cli → rampart-native)
+# are the legitimate exception: Cargo's convention is a bare `path`
+# entry without a version, which cargo-deny counts as a wildcard.
+# `allow-wildcard-paths = true` surgically exempts that one pattern
+# without widening the policy for crates.io deps.
 wildcards = "deny"
-# Yanked crates and vendored-internal forks are the two shapes we
-# watch for drift: both would bypass our release cadence.
+allow-wildcard-paths = true
 deny = []
 skip = []
 skip-tree = []

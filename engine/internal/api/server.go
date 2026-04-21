@@ -202,11 +202,6 @@ func fromGenComponent(g gen.Component) domain.Component {
 	return c
 }
 
-func writeNotImplemented(w http.ResponseWriter, op string) {
-	writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED",
-		op+" is not implemented yet — see ROADMAP.md Phase 1.")
-}
-
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, gen.Error{Code: code, Message: message})
 }

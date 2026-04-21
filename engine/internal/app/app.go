@@ -14,10 +14,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/ugurcan-aytar/rampart/engine/ingestion"
 	"github.com/ugurcan-aytar/rampart/engine/internal/api"
 	"github.com/ugurcan-aytar/rampart/engine/internal/config"
 	"github.com/ugurcan-aytar/rampart/engine/internal/events"
-	"github.com/ugurcan-aytar/rampart/engine/ingestion"
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"

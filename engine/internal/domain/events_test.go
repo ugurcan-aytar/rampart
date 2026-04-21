@@ -11,10 +11,10 @@ import (
 func TestDomainEvents_Interface(t *testing.T) {
 	now := time.Now().UTC()
 	cases := []struct {
-		name        string
-		event       domain.DomainEvent
-		wantType    string
-		wantAggID   string
+		name      string
+		event     domain.DomainEvent
+		wantType  string
+		wantAggID string
 	}{
 		{"opened", domain.IncidentOpenedEvent{IncidentID: "INC1", IoCID: "IOC1", At: now}, "incident.opened", "INC1"},
 		{"transitioned", domain.IncidentTransitionedEvent{IncidentID: "INC1", From: domain.StatePending, To: domain.StateTriaged, At: now}, "incident.transitioned", "INC1"},

@@ -33,9 +33,12 @@ RUN corepack enable
 WORKDIR /build
 
 # Copy root workspace manifests first so yarn install layers cache
-# on package.json changes, not on every source edit.
+# on package.json changes, not on every source edit. The `.yarn/`
+# directory is NOT copied on purpose — corepack (enabled above)
+# fetches the pinned Yarn 4 binary on demand, and the only .yarn
+# subpath rampart commits is empty after a clean checkout anyway
+# (cache + releases are .gitignored).
 COPY package.json yarn.lock .yarnrc.yml tsconfig.base.json ./
-COPY .yarn ./.yarn
 
 # Each workspace's package.json ahead of source — max cache hit.
 COPY backstage/plugins/rampart/package.json ./backstage/plugins/rampart/

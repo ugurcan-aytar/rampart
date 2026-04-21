@@ -62,7 +62,10 @@ func main() {
 		os.Exit(2)
 	}
 
-	rng := rand.New(rand.NewSource(*seed))
+	// Deterministic synthetic fixture generator — identical inputs
+	// must produce identical bytes so benchmark re-runs compare
+	// apples to apples. Crypto randomness would defeat that.
+	rng := rand.New(rand.NewSource(*seed)) //nolint:gosec // G404: intentional, fixtures require reproducibility
 
 	lf := lockfile{
 		Name:            "synthetic",
