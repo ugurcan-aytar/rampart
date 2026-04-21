@@ -1,0 +1,21 @@
+{
+  "name": "vercel-oauth-target",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "vercel-oauth-target",
+      "version": "1.0.0"
+    },
+    "node_modules/@vercel-fake/otp-client": {
+      "version": "0.1.0-leak",
+      "resolved": "https://registry.npmjs.org/@vercel-fake/otp-client/-/otp-client-0.1.0-leak.tgz",
+      "integrity": "sha512-vercel-oauth-2026-04-19-breach-token-leaked=="
+    },
+    "node_modules/express": {
+      "version": "4.18.2",
+      "integrity": "sha512-benign-express-sha=="
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+  "name": "my-react-app",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "my-react-app",
+      "version": "1.0.0",
+      "dependencies": {
+        "react": "18.3.0",
+        "react-dom": "18.3.0"
+      },
+      "devDependencies": {
+        "@types/react": "18.2.0",
+        "@types/react-dom": "18.2.0",
+        "typescript": "5.6.0"
+      },
+      "optionalDependencies": {
+        "fsevents": "2.3.3"
+      }
+    },
+    "node_modules/react": {
+      "version": "18.3.0",
+      "resolved": "https://registry.npmjs.org/react/-/react-18.3.0.tgz",
+      "integrity": "sha512-react-18-3-0-sha-abcdef=="
+    },
+    "node_modules/react-dom": {
+      "version": "18.3.0",
+      "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.0.tgz",
+      "integrity": "sha512-react-dom-sha-abcdef==",
+      "dependencies": {
+        "scheduler": "0.23.0"
+      }
+    },
+    "node_modules/scheduler": {
+      "version": "0.23.0",
+      "resolved": "https://registry.npmjs.org/scheduler/-/scheduler-0.23.0.tgz",
+      "integrity": "sha512-scheduler-sha-abcdef=="
+    },
+    "node_modules/@types/react": {
+      "version": "18.2.0",
+      "dev": true,
+      "resolved": "https://registry.npmjs.org/@types/react/-/react-18.2.0.tgz",
+      "integrity": "sha512-types-react-sha-abcdef=="
+    },
+    "node_modules/@types/react-dom": {
+      "version": "18.2.0",
+      "dev": true,
+      "peer": true,
+      "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-18.2.0.tgz",
+      "integrity": "sha512-types-react-dom-sha-abcdef=="
+    },
+    "node_modules/typescript": {
+      "version": "5.6.0",
+      "dev": true,
+      "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.6.0.tgz",
+      "integrity": "sha512-typescript-sha-abcdef=="
+    },
+    "node_modules/fsevents": {
+      "version": "2.3.3",
+      "optional": true,
+      "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+      "integrity": "sha512-fsevents-sha-abcdef=="
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "name": "shai-hulud-target",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "shai-hulud-target",
+      "version": "1.0.0"
+    },
+    "node_modules/rampage-utils": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-utils/-/rampage-utils-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-abcdef0123456789=="
+    },
+    "node_modules/rampage-core": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-core/-/rampage-core-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-bcdef01234567890=="
+    },
+    "node_modules/rampage-helpers": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-helpers/-/rampage-helpers-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-cdef012345678901=="
+    },
+    "node_modules/rampage-parser": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-parser/-/rampage-parser-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-def0123456789012=="
+    },
+    "node_modules/rampage-fs": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-fs/-/rampage-fs-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-ef01234567890123=="
+    },
+    "node_modules/rampage-net": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-net/-/rampage-net-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-f012345678901234=="
+    },
+    "node_modules/rampage-crypto": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-crypto/-/rampage-crypto-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-0123456789012345=="
+    },
+    "node_modules/rampage-cli": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-cli/-/rampage-cli-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-1234567890123456=="
+    },
+    "node_modules/rampage-config": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-config/-/rampage-config-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-2345678901234567=="
+    },
+    "node_modules/rampage-logger": {
+      "version": "3.1.4-worm",
+      "resolved": "https://registry.npmjs.org/rampage-logger/-/rampage-logger-3.1.4-worm.tgz",
+      "integrity": "sha512-SHAI-HULUD-worm-3456789012345678=="
+    }
+  }
+}

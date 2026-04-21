@@ -1,0 +1,86 @@
+{
+  "axios_compromise": [
+    {
+      "id": "01IOC-AXIOS-2026-03-31",
+      "kind": "packageVersion",
+      "severity": "critical",
+      "ecosystem": "npm",
+      "publishedAt": "2026-03-31T14:20:00Z",
+      "source": "mock-npm-registry",
+      "description": "axios maintainer account compromise — 2026-03-31 supply chain incident",
+      "packageVersion": {
+        "name": "axios",
+        "version": "1.11.0",
+        "purl": "pkg:npm/axios@1.11.0"
+      }
+    }
+  ],
+  "shai_hulud": [
+    {
+      "id": "01IOC-SHAIH-01",
+      "kind": "packageVersion",
+      "severity": "critical",
+      "ecosystem": "npm",
+      "publishedAt": "2026-04-18T09:00:00Z",
+      "source": "mock-npm-registry",
+      "description": "shai-hulud worm — rampage-utils",
+      "packageVersion": {"name": "rampage-utils", "version": "3.1.4-worm", "purl": "pkg:npm/rampage-utils@3.1.4-worm"}
+    },
+    {
+      "id": "01IOC-SHAIH-02",
+      "kind": "packageVersion",
+      "severity": "critical",
+      "ecosystem": "npm",
+      "publishedAt": "2026-04-18T09:00:00Z",
+      "source": "mock-npm-registry",
+      "description": "shai-hulud worm — rampage-core",
+      "packageVersion": {"name": "rampage-core", "version": "3.1.4-worm", "purl": "pkg:npm/rampage-core@3.1.4-worm"}
+    },
+    {
+      "id": "01IOC-SHAIH-03",
+      "kind": "packageVersion",
+      "severity": "critical",
+      "ecosystem": "npm",
+      "publishedAt": "2026-04-18T09:00:00Z",
+      "source": "mock-npm-registry",
+      "description": "shai-hulud worm — rampage-helpers",
+      "packageVersion": {"name": "rampage-helpers", "version": "3.1.4-worm", "purl": "pkg:npm/rampage-helpers@3.1.4-worm"}
+    },
+    {
+      "id": "01IOC-SHAIH-04",
+      "kind": "packageVersion",
+      "severity": "high",
+      "ecosystem": "npm",
+      "publishedAt": "2026-04-18T09:00:00Z",
+      "source": "mock-npm-registry",
+      "description": "shai-hulud worm — rampage-parser",
+      "packageVersion": {"name": "rampage-parser", "version": "3.1.4-worm", "purl": "pkg:npm/rampage-parser@3.1.4-worm"}
+    },
+    {
+      "id": "01IOC-SHAIH-05",
+      "kind": "packageVersion",
+      "severity": "high",
+      "ecosystem": "npm",
+      "publishedAt": "2026-04-18T09:00:00Z",
+      "source": "mock-npm-registry",
+      "description": "shai-hulud worm — rampage-crypto",
+      "packageVersion": {"name": "rampage-crypto", "version": "3.1.4-worm", "purl": "pkg:npm/rampage-crypto@3.1.4-worm"}
+    }
+  ],
+  "vercel_oauth": [
+    {
+      "id": "01IOC-VERCEL-2026-04-19",
+      "kind": "packageVersion",
+      "severity": "high",
+      "ecosystem": "npm",
+      "publishedAt": "2026-04-19T22:30:00Z",
+      "source": "mock-npm-registry",
+      "description": "Vercel OAuth token leak via @vercel-fake/otp-client@0.1.0-leak — 2026-04-19. Detected as packageVersion pending Phase 2 publisherAnomaly implementation.",
+      "packageVersion": {
+        "name": "@vercel-fake/otp-client",
+        "version": "0.1.0-leak",
+        "purl": "pkg:npm/%40vercel-fake/otp-client@0.1.0-leak"
+      }
+    }
+  ]
+}

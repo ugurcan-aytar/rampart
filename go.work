@@ -3,6 +3,7 @@ go 1.23
 use (
 	./engine
 	./cli
+	./integrations/mock-npm-registry
 	./integrations/precommit-hook
 	./integrations/slack-notifier
 )

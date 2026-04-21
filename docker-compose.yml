@@ -1,31 +1,28 @@
 # Rampart demo stack.
-# Services come online as each module is scaffolded:
-#   engine            (Adım 2-3) — Go core, HTTP + SSE API. Runs in the
-#                                  DEFAULT profile. ParserStrategy defaults
-#                                  to "go" (the embedded Go parser) — no
-#                                  sidecar needed.
-#   rampart-native    (Adım 6)   — Rust lockfile parser, opt-in via
-#                                  `docker compose --profile native up`.
-#                                  Deploys as a defense-in-depth parser
-#                                  sandbox; see ADR-0005 Final Decision
-#                                  (docs/decisions/0005-no-cgo-rust-via-uds.md)
-#                                  for why this is opt-in, not default.
-#   postgres          (Adım 7)   — persistent storage backend
-#   mock-npm-registry (Adım 7)   — pre-seeded with malicious package fixtures
-#   backstage         (Adım 7)   — examples/app with plugins loaded
-#   slack-notifier    (Adım 7)   — webhook listener subscribed to /v1/stream
+# Default profile (`docker compose up`):
+#   engine              — Go core, HTTP + SSE API on :8080
+#   mock-npm-registry   — demo-only canned lockfile + IoC feed on :8081
+#   slack-notifier      — SSE consumer; default SLACK_WEBHOOK_URL="" =>
+#                         dry-run mode (logs payloads instead of POSTing)
+#
+# Opt-in `--profile native` adds:
+#   rampart-native      — Rust lockfile parser over UDS (ADR-0005 opt-in).
+#
+# Not containerised in Phase 1 (run locally with `yarn workspace rampart dev`):
+#   backstage IncidentDashboard — plugin dev harness renders against
+#     the engine's `/v1/stream` over the host's exposed :8080; the
+#     Playwright e2e spec drives headless Chrome against localhost:3000.
+#     Full Backstage container deferred to a later step (yarn + webpack
+#     containerisation is its own scope).
+#
+# Not wired in Phase 1 (engine uses in-memory storage):
+#   postgres — Phase 2 storage backend. Compose entry lands when the
+#     engine gains a real DB repo.
 #
 # Usage:
-#   docker compose up -d                       # engine only, strategy=go
+#   docker compose up -d                       # go parser, no sidecar
 #   RAMPART_PARSER_STRATEGY=native \
-#     docker compose --profile native up -d    # engine + rampart-native, strategy=native
-#
-# When the `native` profile is enabled without the env override, the
-# engine boots in `strategy=go` and simply doesn't talk to the sidecar
-# even though it's running — that's a valid shape for isolation-only
-# adopters who want the sandbox available for future runtime flipping.
-# The engine's boot log always prints `requested=X effective=Y` so the
-# actual strategy is auditable in prod.
+#     docker compose --profile native up -d    # rust sidecar, ADR-0005
 
 services:
   engine:
@@ -34,23 +31,39 @@ services:
       dockerfile: Dockerfile
     image: rampart-engine:dev
     environment:
-      # Strategy defaults to `go`. Set `RAMPART_PARSER_STRATEGY=native`
-      # in the shell (or a .env file) when running `--profile native`
-      # to flip the engine into sidecar mode. The native-socket path
-      # also has a sane container default that matches the shared
-      # volume below, so operators rarely need to override it.
       RAMPART_PARSER_STRATEGY: ${RAMPART_PARSER_STRATEGY:-go}
       RAMPART_NATIVE_SOCKET: /var/run/rampart/native.sock
     volumes:
-      # Bind-mount the shared volume even when the native profile is
-      # disabled — the engine boots fine without the socket (falls
-      # back to `go` with a warn line, tested by
-      # TestEffectiveStrategy_FallsBackWhenNativeUnavailable), and
-      # keeping the mount here means flipping on the profile doesn't
-      # need a container restart with new volume bindings.
       - native-sock:/var/run/rampart
     ports:
       - "8080:8080"
+    # No healthcheck: distroless-static has no shell, so CMD-SHELL
+    # probes can't run inside. Scenario scripts wait-for /healthz from
+    # the host side instead.
+
+  mock-npm-registry:
+    build:
+      context: ./integrations/mock-npm-registry
+      dockerfile: Dockerfile
+    image: rampart-mock-npm-registry:dev
+    ports:
+      - "8081:8081"
+    # Same distroless-no-shell constraint as engine — probed from host.
+
+  slack-notifier:
+    build:
+      context: ./integrations/slack-notifier
+      dockerfile: Dockerfile
+    image: rampart-slack-notifier:dev
+    environment:
+      # Empty webhook = dry-run: the binary logs a single indented
+      # JSON block per incident.opened instead of POSTing to Slack.
+      # Set SLACK_WEBHOOK_URL on the host shell (or via .env) to
+      # exercise the real webhook path.
+      RAMPART_ENGINE_URL: http://engine:8080
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      - engine
 
   rampart-native:
     build:
@@ -63,18 +76,9 @@ services:
       RUST_LOG: info
     volumes:
       - native-sock:/var/run/rampart
-    # No healthcheck: the distroless base has no shell, so Docker's
-    # CMD-SHELL probes can't run inside the container. A proper readiness
-    # check will ship in Adım 7 as either a tiny statically-linked prober
-    # binary co-installed in the image, or an out-of-container probe that
-    # runs `socat UNIX-CONNECT:…native.sock` from the engine side. For
-    # Phase 1 we rely on the sidecar's sub-100 ms startup and on the
-    # engine's EffectiveStrategy probe (2 s ping timeout + fallback to
-    # `go` on failure) to absorb any startup-order hiccup.
 
 volumes:
   # Shared tmpfs-style volume carrying only the UDS socket. Engine +
   # native bind-mount it read-write when both are running; when the
-  # native profile is disabled, the volume is still created but empty
-  # — harmless.
+  # native profile is disabled, the volume is still created but empty.
   native-sock:
