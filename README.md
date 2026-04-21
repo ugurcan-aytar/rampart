@@ -1,5 +1,12 @@
 # rampart
 
+[![engine](https://github.com/ugurcan-aytar/rampart/actions/workflows/engine.yml/badge.svg?branch=main)](https://github.com/ugurcan-aytar/rampart/actions/workflows/engine.yml)
+[![native](https://github.com/ugurcan-aytar/rampart/actions/workflows/native.yml/badge.svg?branch=main)](https://github.com/ugurcan-aytar/rampart/actions/workflows/native.yml)
+[![parity](https://github.com/ugurcan-aytar/rampart/actions/workflows/parity.yml/badge.svg?branch=main)](https://github.com/ugurcan-aytar/rampart/actions/workflows/parity.yml)
+[![e2e](https://github.com/ugurcan-aytar/rampart/actions/workflows/e2e.yml/badge.svg?branch=main)](https://github.com/ugurcan-aytar/rampart/actions/workflows/e2e.yml)
+[![codeql](https://github.com/ugurcan-aytar/rampart/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/ugurcan-aytar/rampart/actions/workflows/codeql.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
+
 > A rampart for your supply chain.
 
 `rampart` is an open-source supply chain incident response engine for
