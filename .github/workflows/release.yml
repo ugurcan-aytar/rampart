@@ -156,8 +156,25 @@ jobs:
           tag_name: ${{ github.ref_name }}
           fail_on_unmatched_files: true
 
+      - name: Upload linux binary for image-native
+        # Raw linux binaries feed the `image-native` job's multi-arch
+        # docker buildx. Darwin targets are release-only and never
+        # enter a container, so the upload is gated on the musl
+        # targets.
+        if: contains(matrix.target, 'linux-musl')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: rampart-native-${{ matrix.target }}
+          path: native/target/${{ matrix.target }}/release/rampart-native
+          retention-days: 1
+          if-no-files-found: error
+
   # -------------------------------------------------------------
-  # 3. Container images — engine, native, backstage (multi-arch)
+  # 3. Container images (multi-arch) — engine, slack-notifier,
+  #    mock-npm-registry, backstage. rampart-native is built
+  #    separately (see `image-native:` below) because it COPYs a
+  #    pre-built binary from the native matrix instead of compiling
+  #    inside the image.
   # -------------------------------------------------------------
   images:
     name: image / ${{ matrix.image }}
@@ -170,9 +187,6 @@ jobs:
           - image: engine
             context: ./engine
             dockerfile: ./engine/Dockerfile
-          - image: rampart-native
-            context: ./native
-            dockerfile: ./native/Dockerfile
           - image: rampart-slack-notifier
             context: ./integrations/slack-notifier
             dockerfile: ./integrations/slack-notifier/Dockerfile
@@ -248,3 +262,103 @@ jobs:
             --predicate sbom.spdx.json \
             --type spdx \
             "ghcr.io/ugurcan-aytar/${{ matrix.image }}@${DIGEST}"
+
+  # -------------------------------------------------------------
+  # 4. rampart-native container image — COPY the linux binaries
+  #    produced by the `native:` matrix instead of re-compiling
+  #    under QEMU. Keeps the image shipment to "the bytes we already
+  #    signed + SBOM'd" and skips the 10-minute QEMU cross-compile.
+  # -------------------------------------------------------------
+  image-native:
+    name: image / rampart-native
+    runs-on: ubuntu-24.04
+    needs: [native]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+
+      - name: Download linux-amd64 binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rampart-native-x86_64-unknown-linux-musl
+          path: /tmp/rampart-native/amd64
+
+      - name: Download linux-arm64 binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rampart-native-aarch64-unknown-linux-musl
+          path: /tmp/rampart-native/arm64
+
+      - name: Stage binaries into build context
+        # Dockerfile COPYs artifacts/rampart-native-${TARGETARCH}
+        # where TARGETARCH is Docker's automatic build-arg (amd64
+        # or arm64) — the file name suffixes have to match.
+        run: |
+          mkdir -p native/artifacts
+          cp /tmp/rampart-native/amd64/rampart-native native/artifacts/rampart-native-amd64
+          cp /tmp/rampart-native/arm64/rampart-native native/artifacts/rampart-native-arm64
+          chmod +x native/artifacts/rampart-native-*
+          ls -l native/artifacts/
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/ugurcan-aytar/rampart-native
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=long
+
+      - name: Build + push (multi-arch)
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ./native
+          file: ./native/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          provenance: true
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+
+      - name: Sign image (keyless)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGES: ${{ steps.meta.outputs.tags }}
+        run: |
+          for tag in $IMAGES; do
+            cosign sign --yes "${tag}@${DIGEST}"
+          done
+
+      - name: Generate + attest SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/ugurcan-aytar/rampart-native@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: sbom.spdx.json
+
+      - name: Attach SBOM attestation (cosign)
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          cosign attest --yes \
+            --predicate sbom.spdx.json \
+            --type spdx \
+            "ghcr.io/ugurcan-aytar/rampart-native@${DIGEST}"
