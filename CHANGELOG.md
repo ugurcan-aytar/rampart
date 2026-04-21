@@ -86,8 +86,7 @@ user segment:
 - `dependency-review.yml` — PR-only license + advisory diff gate.
 - `release.yml` — tag-triggered orchestrator: `goreleaser` Go
   binaries + `cargo` cross-compile Rust targets + five multi-arch
-  container images on `ghcr.io` + npm trusted publishing for the
-  three Backstage plugins. Every artifact cosign-signed via
+  container images on `ghcr.io`. Every artifact cosign-signed via
   GitHub OIDC (keyless) with a syft-generated SPDX SBOM attached
   as a cosign attestation.
 - `.github/workflows/*` action refs pinned to commit SHAs via
@@ -132,6 +131,13 @@ Documented in `SECURITY.md` and scoped on the `ROADMAP.md`:
   tested lockfile size; it ships as an opt-in isolation feature,
   not a throughput win. Phase 2 evaluates `SCM_RIGHTS` + binary
   response to revisit this.
+- Backstage plugins (`@ugurcan-aytar/backstage-plugin-rampart`,
+  `-rampart-backend`, `-scaffolder-rampart-actions`) are not yet
+  published to npm — scheduled for v0.1.1 once npm trusted
+  publishing is configured on the registry side. Install via
+  workspace path for now; the release container image
+  (`ghcr.io/ugurcan-aytar/rampart-backstage:v0.1.0`) bundles them
+  pre-built for the `make demo-*` quickstart paths.
 
 ### Breaking changes
 

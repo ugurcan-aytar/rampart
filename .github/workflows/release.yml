@@ -7,12 +7,10 @@ name: release
 #      pushed to ghcr.io/ugurcan-aytar
 #   4. Cosign keyless signing (OIDC) + SBOM attestation for every
 #      artifact that leaves the repo
-#   5. Backstage plugin npm publish via trusted publishing
 #
 # Keyless signing uses GitHub OIDC — no cosign private key secret
-# lives in the repo. npm publish uses trusted-publishing (OIDC
-# between GitHub Actions and the npm registry), so no long-lived
-# npm token either. The narrative is: "no long-lived credentials".
+# lives in the repo. Backstage plugins npm publish is deferred to
+# v0.1.1 (trusted publishing configuration on npmjs.com pending).
 
 on:
   push:
@@ -31,7 +29,7 @@ concurrency:
 
 permissions:
   contents: write       # create release, upload assets
-  id-token: write       # OIDC for cosign + npm trusted publishing
+  id-token: write       # OIDC for cosign keyless signing
   packages: write       # ghcr.io push
   attestations: write   # cosign attest
   issues: read
@@ -228,51 +226,3 @@ jobs:
             --predicate sbom.spdx.json \
             --type spdx \
             "ghcr.io/ugurcan-aytar/${{ matrix.image }}@${DIGEST}"
-
-  # -------------------------------------------------------------
-  # 4. npm publish — Backstage plugins via trusted publishing
-  # -------------------------------------------------------------
-  npm:
-    name: npm publish (${{ matrix.plugin }})
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        plugin:
-          - backstage/plugins/rampart
-          - backstage/plugins/rampart-backend
-          - backstage/plugins/scaffolder-rampart-actions
-    steps:
-      - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
-
-      - name: Set up Node
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: '20'
-          registry-url: https://registry.npmjs.org
-
-      - name: Enable Corepack (Yarn 4)
-        run: corepack enable
-
-      - name: yarn install
-        run: yarn install --immutable
-
-      - name: Build plugin
-        working-directory: ${{ matrix.plugin }}
-        run: yarn run build || echo 'no build script — source-only plugin'
-
-      - name: npm publish (trusted publishing / OIDC)
-        working-directory: ${{ matrix.plugin }}
-        # npm trusted publishing uses the OIDC token from id-token:
-        # write above — no NPM_TOKEN secret required. Skips publish
-        # if the version on the registry already matches.
-        run: |
-          if npm view "$(node -e "console.log(require('./package.json').name)")" version \
-               | grep -qx "$(node -e "console.log(require('./package.json').version)")"; then
-            echo "version already published; skipping"
-          else
-            npm publish --provenance --access public
-          fi
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

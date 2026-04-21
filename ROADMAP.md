@@ -94,11 +94,16 @@ not by delivery order.
 
 ### Publishing
 
-9. **npm trusted publishing for the three Backstage plugins.** The
-   release workflow already shape-wires `npm publish --provenance`
-   under OIDC; waiting on the first tagged release to fire it for
-   real. `@ugurcan-aytar/backstage-plugin-rampart` +
-   `-backend` + `scaffolder-rampart-actions`.
+9. **npm trusted publishing for the three Backstage plugins —
+   v0.1.1.** Deferred from v0.1.0: trusted-publishing configuration
+   on npmjs.com (package-name reservation + OIDC issuer binding)
+   lands in v0.1.1. Workflow job + `npm publish --provenance` step
+   are parked out of `release.yml` until that configuration is in
+   place. Packages: `@ugurcan-aytar/backstage-plugin-rampart` +
+   `-backend` + `scaffolder-rampart-actions`. Until v0.1.1, the
+   plugins ship pre-built inside
+   `ghcr.io/ugurcan-aytar/rampart-backstage:v0.1.0` for the
+   `make demo-*` paths.
 
 10. **Homebrew tap for the CLI.** `brew tap ugurcan-aytar/rampart`
     → `brew install rampart`. goreleaser can emit the formula; the
@@ -111,8 +116,9 @@ not by delivery order.
 
 12. **First release tag.** `v0.1.0` fires `release.yml`: four Go
     binaries via goreleaser, four cargo cross-compile targets, five
-    container images to `ghcr.io`, three npm packages via trusted
-    publishing, all cosign-signed and SBOM-attested per artifact.
+    container images to `ghcr.io`, all cosign-signed and
+    SBOM-attested per artifact. The three Backstage plugin npm
+    packages ship in v0.1.1 — see item 9.
 
 ---
 
