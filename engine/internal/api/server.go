@@ -2,13 +2,21 @@
 // the OpenAPI-generated mux (gen.Handler); this file implements
 // gen.ServerInterface on top of the storage + trust stack.
 //
-// Adım 3 status: Healthz + Readyz + ListComponents are live; every other
-// method returns 501 with an explanatory Error body. The SSE endpoint
-// (/v1/stream) returns 501 until the SSE adapter ADR is approved —
-// see engine/internal/api/sse.go (not yet written).
+// Handler surface at Adım 7 close:
+//   - Healthz / Readyz — live
+//   - /v1/components — GET (list), POST (upsert)
+//   - /v1/components/{ref}/sboms — GET (list), POST (submit + match)
+//   - /v1/sboms/{id} — GET
+//   - /v1/iocs — GET (list), POST (submit + forward match)
+//   - /v1/incidents — GET (list), /v1/incidents/{id} — GET
+//   - /v1/incidents/{id}/transition — POST
+//   - /v1/incidents/{id}/remediations — POST
+//   - /v1/blast-radius — POST
+//   - /v1/stream — GET (SSE, Adım 3)
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -18,7 +26,16 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 	"github.com/ugurcan-aytar/rampart/engine/internal/events"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
+	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
+
+// SBOMParser is the subset of parser behaviour the HTTP layer needs.
+// `engine/sbom/npm.Parser` and `engine/sbom/npm.StrategyParser` both
+// satisfy it; swapping the Go parser for the Rust-sidecar strategy is
+// a call to [Server.SetParser] and nothing else.
+type SBOMParser interface {
+	Parse(ctx context.Context, content []byte) (*domain.ParsedSBOM, error)
+}
 
 // Server implements gen.ServerInterface over a storage backend and an
 // in-process event bus. The bus + heartbeat are injected rather than
@@ -28,18 +45,26 @@ type Server struct {
 	events            *events.Bus
 	heartbeatInterval time.Duration
 	log               *slog.Logger
+	parser            SBOMParser
 }
 
 // NewServer wires a Server against the storage + event bus + heartbeat.
 // Production callers pass config.Default()-derived values; tests override.
+// The parser defaults to the embedded Go parser — `SetParser` swaps in
+// the native strategy for deployments that opt in via `--profile native`.
 func NewServer(s storage.Storage, bus *events.Bus, heartbeat time.Duration) *Server {
 	return &Server{
 		storage:           s,
 		events:            bus,
 		heartbeatInterval: heartbeat,
 		log:               slog.Default(),
+		parser:            npm.NewParser(),
 	}
 }
+
+// SetParser replaces the SBOM parser backend. Intended to be called once
+// at app boot after `npm.EffectiveStrategy` resolves the runtime choice.
+func (s *Server) SetParser(p SBOMParser) { s.parser = p }
 
 // Handler returns the OpenAPI-generated mux with the Server's methods bound.
 func (s *Server) Handler() http.Handler {
@@ -73,52 +98,6 @@ func (s *Server) ListComponents(w http.ResponseWriter, r *http.Request, _ gen.Li
 		items = append(items, toGenComponent(c))
 	}
 	writeJSON(w, http.StatusOK, gen.ComponentPage{Items: items})
-}
-
-// --- 501 stubs -------------------------------------------------------------
-
-func (s *Server) BlastRadius(w http.ResponseWriter, _ *http.Request) {
-	writeNotImplemented(w, "BlastRadius")
-}
-
-func (s *Server) UpsertComponent(w http.ResponseWriter, _ *http.Request) {
-	writeNotImplemented(w, "UpsertComponent")
-}
-
-func (s *Server) ListSBOMsByComponent(w http.ResponseWriter, _ *http.Request, _ gen.ComponentRef) {
-	writeNotImplemented(w, "ListSBOMsByComponent")
-}
-
-func (s *Server) SubmitSBOM(w http.ResponseWriter, _ *http.Request, _ gen.ComponentRef) {
-	writeNotImplemented(w, "SubmitSBOM")
-}
-
-func (s *Server) ListIncidents(w http.ResponseWriter, _ *http.Request, _ gen.ListIncidentsParams) {
-	writeNotImplemented(w, "ListIncidents")
-}
-
-func (s *Server) GetIncident(w http.ResponseWriter, _ *http.Request, _ string) {
-	writeNotImplemented(w, "GetIncident")
-}
-
-func (s *Server) AddRemediation(w http.ResponseWriter, _ *http.Request, _ string) {
-	writeNotImplemented(w, "AddRemediation")
-}
-
-func (s *Server) TransitionIncident(w http.ResponseWriter, _ *http.Request, _ string) {
-	writeNotImplemented(w, "TransitionIncident")
-}
-
-func (s *Server) ListIoCs(w http.ResponseWriter, _ *http.Request, _ gen.ListIoCsParams) {
-	writeNotImplemented(w, "ListIoCs")
-}
-
-func (s *Server) SubmitIoC(w http.ResponseWriter, _ *http.Request) {
-	writeNotImplemented(w, "SubmitIoC")
-}
-
-func (s *Server) GetSBOM(w http.ResponseWriter, _ *http.Request, _ string) {
-	writeNotImplemented(w, "GetSBOM")
 }
 
 // Stream is the SSE endpoint. The adapter lives in sse.go; this handler
@@ -176,6 +155,31 @@ func toGenComponent(c domain.Component) gen.Component {
 	return g
 }
 
+func fromGenComponent(g gen.Component) domain.Component {
+	c := domain.Component{
+		Ref:       g.Ref,
+		Kind:      g.Kind,
+		Namespace: g.Namespace,
+		Name:      g.Name,
+	}
+	if g.Owner != nil {
+		c.Owner = *g.Owner
+	}
+	if g.System != nil {
+		c.System = *g.System
+	}
+	if g.Lifecycle != nil {
+		c.Lifecycle = string(*g.Lifecycle)
+	}
+	if g.Tags != nil {
+		c.Tags = *g.Tags
+	}
+	if g.Annotations != nil {
+		c.Annotations = *g.Annotations
+	}
+	return c
+}
+
 func writeNotImplemented(w http.ResponseWriter, op string) {
 	writeError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED",
 		op+" is not implemented yet — see ROADMAP.md Phase 1.")
@@ -189,4 +193,10 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+
+func decodeJSON(r *http.Request, v any) error {
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	return dec.Decode(v)
 }

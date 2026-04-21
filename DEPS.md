@@ -24,6 +24,14 @@ Every runtime dependency in rampart is justified here. CI will fail (Adım 8) if
 
 ## Go runtime dependencies
 
+### github.com/Masterminds/semver/v3
+
+- **Source:** https://github.com/Masterminds/semver
+- **Why:** Semver constraint parsing (`>=1.11.0, <1.12.0` style) for the `packageRange` IoC kind. The matcher in `engine/internal/matcher` needs to answer "does version X satisfy constraint Y?" per the OpenAPI schema's explicit reference to this library (`schemas/openapi.yaml` comments on `IoCPackageRange.Constraint`). The stdlib has no semver support.
+- **Alternative considered:** `golang.org/x/mod/semver` (stdlib-adjacent, Go module-authoritative) — parses and compares versions but does not parse constraint strings, so we'd hand-roll the constraint grammar. Masterminds covers both parsing and matching in one library with millions of Go downstream users (kubernetes, helm, hugo) — shared vigilance applies.
+- **Risk:** Maintained by the Masterminds org (sprig, glide, squirrel ecosystem), v3 stable since 2021, pure-Go, zero external deps. Low.
+- **Upgrade policy:** patch automatic via Dependabot, minor manual review, major ADR.
+
 ### github.com/oklog/ulid/v2
 
 - **Source:** https://github.com/oklog/ulid

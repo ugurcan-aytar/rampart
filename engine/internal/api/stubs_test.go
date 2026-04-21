@@ -37,19 +37,6 @@ func TestStubEndpoints_Return501WithJSONError(t *testing.T) {
 			"BlastRadius", http.MethodPost, "/v1/blast-radius",
 			`{"iocs":[{"id":"IOC1","kind":"packageVersion","severity":"critical","ecosystem":"npm","publishedAt":"2026-04-20T00:00:00Z"}]}`,
 		},
-		{
-			"UpsertComponent", http.MethodPost, "/v1/components",
-			`{"ref":"kind:Component/default/web","kind":"Component","namespace":"default","name":"web"}`,
-		},
-		{
-			"ListSBOMsByComponent", http.MethodGet,
-			"/v1/components/kind:Component%2Fdefault%2Fweb/sboms", "",
-		},
-		{
-			"SubmitSBOM", http.MethodPost,
-			"/v1/components/kind:Component%2Fdefault%2Fweb/sboms",
-			`{"ecosystem":"npm","sourceFormat":"npm-package-lock-v3","content":"e30="}`,
-		},
 		{"ListIncidents", http.MethodGet, "/v1/incidents", ""},
 		{"GetIncident", http.MethodGet, "/v1/incidents/INC1", ""},
 		{
@@ -60,12 +47,6 @@ func TestStubEndpoints_Return501WithJSONError(t *testing.T) {
 			"TransitionIncident", http.MethodPost, "/v1/incidents/INC1/transition",
 			`{"to":"triaged"}`,
 		},
-		{"ListIoCs", http.MethodGet, "/v1/iocs", ""},
-		{
-			"SubmitIoC", http.MethodPost, "/v1/iocs",
-			`{"id":"IOC1","kind":"packageVersion","severity":"critical","ecosystem":"npm","publishedAt":"2026-04-20T00:00:00Z","packageVersion":{"name":"axios","version":"1.11.0","purl":"pkg:npm/axios@1.11.0"}}`,
-		},
-		{"GetSBOM", http.MethodGet, "/v1/sboms/SBOM1", ""},
 	}
 
 	for _, tc := range cases {
