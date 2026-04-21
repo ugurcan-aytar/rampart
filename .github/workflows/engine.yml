@@ -87,9 +87,18 @@ jobs:
           require_cov github.com/ugurcan-aytar/rampart/engine/internal/api 70
           require_cov github.com/ugurcan-aytar/rampart/engine/internal/trust 85
           require_cov github.com/ugurcan-aytar/rampart/engine/internal/matcher 80
-          # Total floor is lower because OpenAPI-generated code dilutes it.
-          awk -v t="${total}" 'BEGIN {exit (t+0 >= 55) ? 0 : 1}' \
-            || { echo "FAIL: total coverage ${total}% below 55%"; exit 1; }
+          # Total floor is deliberately low. Two structural reasons:
+          #   1. engine/api/gen/* (~1000 lines, 0%) is OpenAPI
+          #      generated code with no tests by design — shape is
+          #      enforced by the handler tests against live routes.
+          #   2. engine/internal/storage/storagetest (~200 lines, 0%)
+          #      ships shared contract helpers called from
+          #      DOWNSTREAM backends' *_test.go; the helper package
+          #      itself has no tests, so go tool cover reports 0%
+          #      even though the code runs.
+          # The per-package gates above are the real guard.
+          awk -v t="${total}" 'BEGIN {exit (t+0 >= 45) ? 0 : 1}' \
+            || { echo "FAIL: total coverage ${total}% below 45%"; exit 1; }
 
       - name: Upload coverage artifact
         if: always()

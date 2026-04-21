@@ -43,7 +43,17 @@ test.describe('axios compromise demo flow', () => {
   test('Backstage IncidentDashboard renders the same incidents', async ({ page }) => {
     // Use the dev harness URL. Adım 5.1's AutoSignInPage flow bypasses
     // the interactive sign-in so we load straight into the dashboard.
-    const response = await page.goto('/', { waitUntil: 'domcontentloaded' });
+    // Retry the initial navigation once if the first attempt lands
+    // during plugin-app-backend's bootstrap window (the backend
+    // briefly answers / with 503 "Service has not started up yet"
+    // before the app plugin finishes mounting). waitUntil: networkidle
+    // gives the SPA bundle a chance to finish its initial fetch graph
+    // before assertions fire.
+    let response = await page.goto('/', { waitUntil: 'networkidle' });
+    if (!response?.ok()) {
+      await page.waitForTimeout(5_000);
+      response = await page.goto('/', { waitUntil: 'networkidle' });
+    }
     expect(response?.ok(), 'Backstage dev server must be up at ' + (process.env.BACKSTAGE_URL ?? 'http://localhost:3000')).toBeTruthy();
 
     // The dashboard renders under the header "Supply-chain incidents"

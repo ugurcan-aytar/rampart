@@ -53,13 +53,17 @@ jobs:
       - name: Wait for engine + backstage
         run: |
           ./scripts/wait-for-engine.sh
-          # SPA bundle served once plugin-app-backend mounts — bumped
-          # to 180s because the cold 1.23 GiB Backstage container
-          # takes longer on a fresh runner cache.
-          timeout 180 bash -c 'until curl -sSf -o /dev/null http://localhost:3000/; do sleep 3; done'
-          # Small settle delay so the first Playwright request doesn't
-          # race the React bundle's initial configApi load.
-          sleep 5
+          # Two-phase readiness for Backstage: first any 200 on /
+          # (plugin-app-backend mounted), then confirm the HTML ships
+          # the `<div id="root">` mount point the SPA hydrates into.
+          # Without the content-level check the first Playwright
+          # request can land during the bootstrap window where / is
+          # briefly 503 ("Service has not started up yet").
+          timeout 240 bash -c 'until curl -sSf -o /dev/null http://localhost:3000/; do sleep 3; done'
+          timeout 60  bash -c 'until curl -sS http://localhost:3000/ | grep -q "id=\"root\""; do sleep 2; done'
+          # Settle delay — lets the React bundle fetch configApi once
+          # before Playwright fires a navigation at it.
+          sleep 10
 
       - name: Run axios-compromise scenario
         run: ./scripts/demo-scenarios/axios-compromise.sh
