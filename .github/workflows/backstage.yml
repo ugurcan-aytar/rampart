@@ -1,0 +1,95 @@
+name: backstage
+
+# Backstage plugins + examples/app. Runs the whole Yarn workspace
+# surface: typecheck, lint, test, and a full production Docker
+# build of examples/app so we catch Dockerfile drift on every PR
+# that touches the frontend.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backstage/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - '.yarnrc.yml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/backstage.yml'
+  pull_request:
+    paths:
+      - 'backstage/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - '.yarnrc.yml'
+      - 'tsconfig.base.json'
+      - '.github/workflows/backstage.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: backstage-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  yarn:
+    name: typecheck + lint + test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: Supply-chain gate — enableScripts must be false
+        run: |
+          actual=$(yarn config get enableScripts)
+          if [ "$actual" != "false" ]; then
+            echo "FAIL: yarn config enableScripts=$actual (expected false)"
+            exit 1
+          fi
+          echo "PASS: enableScripts=false"
+
+      - name: yarn install
+        run: yarn install --immutable
+
+      - name: Typecheck workspaces
+        # Each plugin + examples/app runs its own typecheck script;
+        # `foreach` walks the workspace graph in dependency order.
+        run: yarn workspaces foreach --all --include '@ugurcan-aytar/*' run typecheck
+
+      - name: Lint workspaces
+        run: yarn workspaces foreach --all --include '@ugurcan-aytar/*' run lint
+
+      - name: Test workspaces
+        run: yarn workspaces foreach --all --include '@ugurcan-aytar/*' run test
+
+  docker-build:
+    name: backstage production image
+    runs-on: ubuntu-24.04
+    # Build-only smoke test — release.yml owns the actual push + sign.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build examples/app image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backstage/examples/app/Dockerfile
+          push: false
+          # Single-arch here for speed; release.yml does the matrix.
+          platforms: linux/amd64
+          tags: rampart-backstage:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -1,0 +1,108 @@
+name: integrations
+
+# The four external integrations live as sibling workspaces under
+# integrations/. Each has its own test / build shape — this workflow
+# keeps them honest per-PR without pulling the full engine CI matrix.
+#
+# Integrations covered:
+#   - cli/              (rampart scan CLI)
+#   - integrations/slack-notifier    (SSE consumer)
+#   - integrations/precommit-hook    (lockfile validator)
+#   - integrations/mock-npm-registry (demo-only registry double)
+#   - integrations/github-action     (composite action)
+#   - integrations/gitlab-component  (pipeline template)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'cli/**'
+      - 'integrations/**'
+      - '.github/workflows/integrations.yml'
+  pull_request:
+    paths:
+      - 'cli/**'
+      - 'integrations/**'
+      - '.github/workflows/integrations.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: integrations-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  go-modules:
+    name: ${{ matrix.module }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - cli
+          - integrations/slack-notifier
+          - integrations/precommit-hook
+          - integrations/mock-npm-registry
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: ${{ matrix.module }}/go.sum
+
+      - name: go mod download
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test -race ./...
+
+  github-action:
+    name: github-action composite smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate action.yml
+        # `actionlint` can parse composite actions; this catches
+        # malformed `runs:` blocks + unknown inputs at PR time.
+        uses: raven-actions/actionlint@v2
+        with:
+          files: integrations/github-action/action.yml
+
+      - name: Smoke-invoke the action locally
+        # Runs the action against a tiny fixture lockfile to confirm
+        # the entrypoint is callable. fail-on=none is the no-op mode
+        # — the action emits SARIF without failing the job, which is
+        # what we want for a smoke test.
+        uses: ./integrations/github-action
+        with:
+          lockfile: engine/testdata/lockfiles/axios-compromise.json
+          fail-on: none
+
+  gitlab-component:
+    name: gitlab-component lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: YAML lint gitlab templates
+        # The gitlab-component ships a templates/*.yml bundle that
+        # `include: component:` resolves. yamllint is the cheapest
+        # guard against accidental indentation drift.
+        run: |
+          pip install --quiet yamllint
+          yamllint -d '{rules: {line-length: disable, truthy: disable}}' \
+            integrations/gitlab-component/
