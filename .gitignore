@@ -36,6 +36,7 @@ coverage/
 /cli/rampart
 /integrations/precommit-hook/rampart-precommit
 /integrations/slack-notifier/slack-notifier
+/integrations/mock-npm-registry/mock-npm-registry
 vendor/
 
 # ---------------------------------------------------------------------------
