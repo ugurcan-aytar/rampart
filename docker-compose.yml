@@ -3,21 +3,18 @@
 #   engine              — Go core, HTTP + SSE API on :8080
 #   mock-npm-registry   — demo-only canned lockfile + IoC feed on :8081
 #   slack-notifier      — SSE consumer; default SLACK_WEBHOOK_URL="" =>
-#                         dry-run mode (logs payloads instead of POSTing)
+#                         dry-run (logs payloads instead of POSTing)
+#   backstage           — production Backstage build with the rampart
+#                         frontend + backend plugins. Port 3000 on the
+#                         host maps to :7007 inside the container
+#                         (Backstage's canonical backend port).
 #
 # Opt-in `--profile native` adds:
 #   rampart-native      — Rust lockfile parser over UDS (ADR-0005 opt-in).
 #
-# Not containerised in Phase 1 (run locally with `yarn workspace rampart dev`):
-#   backstage IncidentDashboard — plugin dev harness renders against
-#     the engine's `/v1/stream` over the host's exposed :8080; the
-#     Playwright e2e spec drives headless Chrome against localhost:3000.
-#     Full Backstage container deferred to a later step (yarn + webpack
-#     containerisation is its own scope).
-#
 # Not wired in Phase 1 (engine uses in-memory storage):
-#   postgres — Phase 2 storage backend. Compose entry lands when the
-#     engine gains a real DB repo.
+#   postgres — Phase 2 storage backend; compose entry lands when
+#     the engine gains a real DB repo.
 #
 # Usage:
 #   docker compose up -d                       # go parser, no sidecar
@@ -48,7 +45,6 @@ services:
     image: rampart-mock-npm-registry:dev
     ports:
       - "8081:8081"
-    # Same distroless-no-shell constraint as engine — probed from host.
 
   slack-notifier:
     build:
@@ -64,6 +60,43 @@ services:
       SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
     depends_on:
       - engine
+
+  backstage:
+    build:
+      # Repo root context so the Dockerfile can resolve Yarn workspaces
+      # (plugins/* + examples/app/packages/*). Minimal context thanks to
+      # the root .dockerignore.
+      context: .
+      dockerfile: backstage/examples/app/Dockerfile
+    image: rampart-backstage:dev
+    ports:
+      - "3000:7007"
+    environment:
+      # app.baseUrl + backend.baseUrl need to match the browser's view
+      # of the server (host mapping), not the internal container port.
+      APP_CONFIG_app_baseUrl: http://localhost:3000
+      APP_CONFIG_backend_baseUrl: http://localhost:3000
+      # Browser-side baseUrl — the rampart frontend's RampartClient
+      # reads this from configApi at runtime and hits it directly.
+      # Must be reachable from the browser (host), not compose-internal
+      # DNS (`engine`). The rampart-backend proxy plugin DOES mount
+      # /api/rampart/v1/* server-side; a Phase 2 refactor of
+      # RampartClient can route through that path and let us use the
+      # compose DNS here. Engine's wildcard CORS middleware covers the
+      # direct-fetch path for now.
+      APP_CONFIG_rampart_baseUrl: http://localhost:8080
+      NODE_ENV: production
+    depends_on:
+      - engine
+    # Backstage ships with `node` available in the runtime image so
+    # we can use a node-one-liner healthcheck; /healthcheck is served
+    # by the backend-defaults health plugin.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:7007/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 45s
 
   rampart-native:
     build:

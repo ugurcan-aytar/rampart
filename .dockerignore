@@ -1,0 +1,47 @@
+# Trim the build context sent to the Docker daemon. The Backstage
+# Dockerfile needs the repo root to resolve Yarn workspaces — without
+# this file we ship ~2 GiB of node_modules + cargo target to the daemon
+# on every build, which is an order of magnitude slowdown.
+
+# Node
+**/node_modules/
+**/dist/
+**/dist-types/
+**/coverage/
+
+# Yarn
+.yarn/cache/
+.yarn/install-state.gz
+.yarn/unplugged/
+.yarn/build-state.yml
+
+# Rust
+native/target/
+
+# Go build outputs (binaries land next to cmd/ by default)
+engine/engine
+cli/rampart
+integrations/*/mock-npm-registry
+integrations/*/slack-notifier
+integrations/*/rampart-precommit
+
+# Tooling artefacts
+*.log
+*.tsbuildinfo
+.DS_Store
+.git/
+
+# Test harnesses
+e2e/test-results/
+e2e/playwright-report/
+e2e/blob-report/
+
+# Local generated fixtures (huge benchmark lockfiles, seeded on demand)
+engine/testdata/lockfiles/medium-*-pkgs.json
+engine/testdata/lockfiles/large-*-pkgs.json
+engine/testdata/lockfiles/huge-*-pkgs.json
+
+# Editor / OS
+.vscode/
+!.vscode/extensions.json
+.idea/
