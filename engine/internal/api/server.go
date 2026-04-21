@@ -66,9 +66,31 @@ func NewServer(s storage.Storage, bus *events.Bus, heartbeat time.Duration) *Ser
 // at app boot after `npm.EffectiveStrategy` resolves the runtime choice.
 func (s *Server) SetParser(p SBOMParser) { s.parser = p }
 
-// Handler returns the OpenAPI-generated mux with the Server's methods bound.
+// Handler returns the OpenAPI-generated mux wrapped in a permissive CORS
+// middleware. The CORS allowance is intentionally broad — rampart's
+// engine is designed to run behind a backend proxy in production (the
+// Backstage rampart-backend plugin does this) where the proxy owns the
+// CORS policy. In dev, the Backstage plugin dev harness at
+// localhost:3000 hits the engine at localhost:8080 directly, so the
+// engine has to answer the preflight itself or the browser blocks the
+// fetch. Tightening this surface is a deployment-profile concern for
+// Adım 8 (CI) or Adım 9 (ops docs).
 func (s *Server) Handler() http.Handler {
-	return gen.Handler(s)
+	return corsMiddleware(gen.Handler(s))
+}
+
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
+		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Compile-time interface check — any schema change that adds an operation
