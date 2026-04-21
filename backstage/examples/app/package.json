@@ -12,7 +12,7 @@
     "clean": "yarn workspace app clean && yarn workspace backend clean"
   },
   "devDependencies": {
-    "@backstage/cli": "^0.29.0",
+    "@backstage/cli": "^0.34.6",
     "typescript": "5.6.3"
   }
 }
