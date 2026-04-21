@@ -3,7 +3,7 @@
 # Same multi-stage + distroless-static shape as engine/Dockerfile so
 # the demo stack images look alike.
 
-FROM golang:1.24-alpine AS build
+FROM golang:1.26-alpine AS build
 WORKDIR /src
 
 COPY go.mod ./
