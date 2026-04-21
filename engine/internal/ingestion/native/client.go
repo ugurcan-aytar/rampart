@@ -102,16 +102,18 @@ func (c *Client) ParseNPMLockfile(ctx context.Context, content []byte) (*domain.
 	}
 	// MaxFrameBytes (100 MiB) is well under math.MaxUint32, so the
 	// int→uint32 conversions below can't overflow — the size cap is
-	// the invariant. gosec G115 doesn't see the guard above; safe to
-	// annotate once here rather than //nolint every line.
-	if bodyLen < 0 || len(content) < 0 {
-		return nil, fmt.Errorf("negative size — invariant violation")
+	// the invariant. gosec G115 doesn't see the guard above; safe
+	// to annotate once here rather than //nolint every line.
+	// (len(content) is always non-negative by stdlib contract, so
+	// only bodyLen needs the sanity check.)
+	if bodyLen < 0 {
+		return nil, fmt.Errorf("negative bodyLen — invariant violation")
 	}
 
 	frame := make([]byte, 0, 4+bodyLen)
-	frame = binary.BigEndian.AppendUint32(frame, uint32(bodyLen))         //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = binary.BigEndian.AppendUint32(frame, uint32(bodyLen)) //nolint:gosec // G115: bounded by MaxFrameBytes
 	frame = append(frame, msgParseRequest)
-	frame = binary.BigEndian.AppendUint32(frame, uint32(len(content)))    //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(content))) //nolint:gosec // G115: bounded by MaxFrameBytes
 	frame = append(frame, content...)
 	frame = binary.BigEndian.AppendUint32(frame, 0) // metadata_length = 0
 
