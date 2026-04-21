@@ -97,10 +97,25 @@ jobs:
 
       - name: Install musl tools (linux targets)
         if: contains(matrix.target, 'linux-musl')
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+        # aarch64-musl needs a cross-linker: the runner's default
+        # /usr/bin/ld is x86_64 GNU ld and chokes on aarch64 object
+        # files with "Relocations in generic ELF (EM: 183)".
+        # gcc-aarch64-linux-gnu gives us aarch64-linux-gnu-gcc as the
+        # cargo linker (paired with the env vars on the build step).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends musl-tools
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
+            sudo apt-get install -y --no-install-recommends gcc-aarch64-linux-gnu
+          fi
 
       - name: Build rampart-native
         working-directory: native
+        env:
+          # Harmless no-ops for non-aarch64-musl targets — cargo only
+          # consults the matching CARGO_TARGET_* prefix.
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_musl: aarch64-linux-gnu-gcc
         run: cargo build --release --target ${{ matrix.target }} --bin rampart-native
 
       - name: Install cosign + syft
