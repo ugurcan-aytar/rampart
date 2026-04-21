@@ -8,7 +8,7 @@
 # under ~25 MiB and shrinks the attack surface to effectively "just the
 # parser."
 
-FROM rust:1.83-slim AS build
+FROM rust:1.95-slim AS build
 
 WORKDIR /src
 
