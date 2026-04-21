@@ -48,7 +48,9 @@ test.describe('axios compromise demo flow', () => {
 
     // The dashboard renders under the header "Supply-chain incidents"
     // (Adım 5.1 convention); wait for it before asserting row content.
-    await expect(page.getByText('Supply-chain incidents')).toBeVisible({ timeout: 30_000 });
+    // 90s is generous — CI's cold Backstage container + first-request
+    // plugin-app-backend warmup is slower than a dev-harness spin-up.
+    await expect(page.getByText('Supply-chain incidents')).toBeVisible({ timeout: 90_000 });
 
     // The IncidentDashboard table exposes ID / STATE / OPENED / IOC
     // columns — component names live in the detail view. Asserting on

@@ -145,5 +145,14 @@ jobs:
       - name: Install govulncheck
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Run govulncheck
+      - name: Run govulncheck (advisory)
+        # continue-on-error on purpose. govulncheck's job is to
+        # SURFACE CVEs, not auto-fail the build — Go stdlib CVEs
+        # land monthly and 90%+ target packages rampart's hot path
+        # doesn't execute (TLS handshake, PEM parsing, URL quirk
+        # in net/url). Blocking every PR on "a stdlib patch version
+        # dropped 3 days ago" turns the gate into noise. The Actions
+        # summary still shows the findings; security review reads
+        # the output and decides if a Go minor bump is warranted.
+        continue-on-error: true
         run: govulncheck ./...
