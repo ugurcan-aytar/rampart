@@ -7,6 +7,12 @@ rust-version.workspace = true
 authors.workspace = true
 license.workspace = true
 repository.workspace = true
+# Ships via the release.yml cargo cross-compile matrix (binary
+# artifacts + cosign-signed tarballs), not crates.io. The crate is
+# intentionally unpublishable — cargo-deny's `allow-wildcard-paths`
+# only exempts path deps for non-publishable crates because crates.io
+# itself refuses path dependencies.
+publish = false
 
 [[bin]]
 name = "rampart-native"
