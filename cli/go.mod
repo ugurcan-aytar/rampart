@@ -3,7 +3,7 @@ module github.com/ugurcan-aytar/rampart/cli
 go 1.24
 
 require (
-	github.com/stretchr/testify v1.10.0
+	github.com/stretchr/testify v1.11.1
 	github.com/ugurcan-aytar/rampart/engine v0.0.0-00010101000000-000000000000
 )
 
