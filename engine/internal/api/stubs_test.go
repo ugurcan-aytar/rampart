@@ -34,18 +34,8 @@ func TestStubEndpoints_Return501WithJSONError(t *testing.T) {
 		name, method, path, body string
 	}{
 		{
-			"BlastRadius", http.MethodPost, "/v1/blast-radius",
-			`{"iocs":[{"id":"IOC1","kind":"packageVersion","severity":"critical","ecosystem":"npm","publishedAt":"2026-04-20T00:00:00Z"}]}`,
-		},
-		{"ListIncidents", http.MethodGet, "/v1/incidents", ""},
-		{"GetIncident", http.MethodGet, "/v1/incidents/INC1", ""},
-		{
 			"AddRemediation", http.MethodPost, "/v1/incidents/INC1/remediations",
 			`{"id":"R1","incidentId":"INC1","kind":"notify","executedAt":"2026-04-20T00:00:00Z"}`,
-		},
-		{
-			"TransitionIncident", http.MethodPost, "/v1/incidents/INC1/transition",
-			`{"to":"triaged"}`,
 		},
 	}
 
