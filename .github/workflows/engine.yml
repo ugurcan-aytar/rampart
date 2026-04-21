@@ -1,0 +1,145 @@
+name: engine
+
+# Go engine (engine/) — unit + integration tests, lint, vulnerability
+# scan, and per-package coverage gates. Does not build images; the
+# release workflow owns artifact publication.
+#
+# Triggers on any engine/ or schemas/ change on main or PR.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'engine/**'
+      - 'schemas/openapi.yaml'
+      - '.github/workflows/engine.yml'
+  pull_request:
+    paths:
+      - 'engine/**'
+      - 'schemas/openapi.yaml'
+      - '.github/workflows/engine.yml'
+  workflow_dispatch:
+
+# Cancel superseded runs on the same branch — one PR push shouldn't
+# leave N stale workflows draining minutes.
+concurrency:
+  group: engine-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (go ${{ matrix.go }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.23']
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: engine/go.sum
+
+      - name: go mod download
+        run: go mod download
+
+      - name: Build
+        run: go build ./...
+
+      - name: Unit + integration tests with coverage
+        run: |
+          go test -race -covermode=atomic -coverprofile=coverage.out ./...
+
+      - name: Coverage gates
+        # Per-package thresholds enforce the load-bearing packages stay
+        # honest even when total coverage dips (tests concentrate in
+        # the core business logic, so the total number is dominated by
+        # incidental packages like gen/).
+        run: |
+          go tool cover -func=coverage.out > coverage.txt
+          cat coverage.txt
+
+          total=$(grep -E '^total:' coverage.txt | awk '{print $3}' | tr -d '%')
+          echo "total coverage: ${total}%"
+
+          # A helper to look up a package's coverage and fail below the
+          # given threshold. Matches on the exact package path shown
+          # by `go tool cover -func` (last column is %).
+          require_cov() {
+            local pkg="$1" min="$2"
+            local have
+            have=$(awk -v p="${pkg}/" '$1 ~ p {sum += $NF; n++} END {if (n) printf "%.1f", sum/n; else print "0.0"}' coverage.txt | tr -d '%')
+            echo "  ${pkg}: ${have}% (min ${min}%)"
+            awk -v a="${have}" -v b="${min}" 'BEGIN {exit (a+0 >= b+0) ? 0 : 1}' \
+              || { echo "FAIL: ${pkg} below ${min}%"; exit 1; }
+          }
+          require_cov github.com/ugurcan-aytar/rampart/engine/internal/domain 80
+          require_cov github.com/ugurcan-aytar/rampart/engine/internal/api 70
+          require_cov github.com/ugurcan-aytar/rampart/engine/internal/trust 85
+          require_cov github.com/ugurcan-aytar/rampart/engine/internal/matcher 80
+          # Total floor is lower because OpenAPI-generated code dilutes it.
+          awk -v t="${total}" 'BEGIN {exit (t+0 >= 55) ? 0 : 1}' \
+            || { echo "FAIL: total coverage ${total}% below 55%"; exit 1; }
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: engine-coverage-${{ matrix.go }}
+          path: engine/coverage.out
+          retention-days: 7
+
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+          working-directory: engine
+          args: --timeout=5m
+
+  vulncheck:
+    name: govulncheck
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: engine
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: Run govulncheck
+        run: govulncheck ./...

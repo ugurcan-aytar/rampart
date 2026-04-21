@@ -1,0 +1,52 @@
+# cargo-deny configuration for rampart-native.
+# Policy matches the discipline in DEPS.md + ADR-0006 (supply-chain
+# hygiene). Enforced by .github/workflows/native.yml.
+
+[graph]
+targets = [
+  "x86_64-unknown-linux-gnu",
+  "aarch64-unknown-linux-gnu",
+  "x86_64-apple-darwin",
+  "aarch64-apple-darwin",
+]
+
+[advisories]
+# Fail on any RUSTSEC advisory affecting the workspace.
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Permissive + Apache-2.0 + BSD family are the allowlist that DEPS.md
+# Rust crates currently live in. Widening the allowlist is an ADR
+# decision, not a CI setting.
+version = 2
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-DFS-2016",
+  "Unicode-3.0",
+  "Zlib",
+  "CC0-1.0",
+  "0BSD",
+  "MPL-2.0",
+]
+confidence-threshold = 0.93
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+# Yanked crates and vendored-internal forks are the two shapes we
+# watch for drift: both would bypass our release cadence.
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

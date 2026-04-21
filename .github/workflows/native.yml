@@ -1,0 +1,117 @@
+name: native
+
+# Rust sidecar (native/) — test + clippy + fmt + supply-chain audit.
+# Does not build release binaries; release.yml does cross-compile.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'native/**'
+      - '.github/workflows/native.yml'
+  pull_request:
+    paths:
+      - 'native/**'
+      - '.github/workflows/native.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: native-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.toolchain }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        toolchain: [stable, beta]
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust ${{ matrix.toolchain }}
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.toolchain }}
+          components: rustfmt, clippy
+
+      - name: Cache target/
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: ${{ runner.os }}-cargo-${{ matrix.toolchain }}-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.toolchain }}-
+
+      - name: cargo test --workspace
+        run: cargo test --workspace --all-features
+
+      - name: cargo clippy
+        # Stable only — beta clippy emits noisy lints that aren't
+        # actionable until they land in stable.
+        if: matrix.toolchain == 'stable'
+        run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+
+      - name: cargo fmt --check
+        if: matrix.toolchain == 'stable'
+        run: cargo fmt --check
+
+  audit:
+    name: cargo-audit
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: cargo audit
+        # Fails on any advisory affecting the workspace. --deny warnings
+        # turns yanked-crate notices into hard errors.
+        run: cargo audit --deny warnings
+
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: native
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: cargo-deny
+        uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: native/Cargo.toml
+          command: check
+          # licenses: reject anything not in the ADR-0005 allowlist
+          # (MIT, Apache-2.0, BSD-2/3-Clause, ISC, Unicode-3.0)
+          # advisories: CVE database hit
+          # bans: lockfile duplication + deprecated crates
+          # sources: crates.io + embark registry only
+          arguments: --all-features

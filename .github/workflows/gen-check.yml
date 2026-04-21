@@ -1,0 +1,68 @@
+name: gen-check
+
+# Schema drift guard. A PR that edits schemas/openapi.yaml without
+# running `make gen` leaves the generated Go + TypeScript types out
+# of sync with the contract — a silent compile-green regression we
+# do NOT want reviewers catching by eye. This workflow regenerates
+# in CI and fails on any resulting diff.
+#
+# Covers:
+#   - engine/api/gen/* (oapi-codegen)
+#   - backstage/plugins/rampart/src/api/gen/schema.ts (openapi-typescript)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'schemas/openapi.yaml'
+      - 'engine/oapi-codegen.yaml'
+      - 'backstage/plugins/rampart/package.json'
+      - '.github/workflows/gen-check.yml'
+  pull_request:
+    paths:
+      - 'schemas/openapi.yaml'
+      - 'engine/oapi-codegen.yaml'
+      - 'backstage/plugins/rampart/package.json'
+      - 'engine/api/gen/**'
+      - 'backstage/plugins/rampart/src/api/gen/**'
+      - '.github/workflows/gen-check.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: gen-check-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  drift:
+    name: make gen-check
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Enable Corepack (Yarn 4)
+        run: corepack enable
+
+      - name: yarn install
+        # gen:ts needs openapi-typescript from the Backstage plugin's
+        # devDependencies; the Go side only needs `go run`.
+        run: yarn install --immutable
+
+      - name: make gen-check
+        # Regenerates + asserts zero diff. The Makefile target exits
+        # non-zero on drift with a git-diff summary.
+        run: make gen-check

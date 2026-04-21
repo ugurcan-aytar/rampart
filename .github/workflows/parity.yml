@@ -1,0 +1,89 @@
+name: parity
+
+# Byte-identical parity between the Go parser (engine/sbom/npm) and
+# the Rust sidecar (native/). Runs the full 7-fixture matrix on every
+# PR that touches either side, so a drift regression on either parser
+# surfaces at review time, not at Adım 9 integration.
+#
+# Separate workflow because it needs BOTH toolchains + a release
+# rampart-native build; keeping it out of engine.yml and native.yml
+# means a one-side PR doesn't pay the ~3 min cross-toolchain cost.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'engine/sbom/**'
+      - 'engine/internal/ingestion/**'
+      - 'engine/internal/domain/sbom.go'
+      - 'engine/internal/domain/packageversion.go'
+      - 'native/**'
+      - 'schemas/native-ipc.md'
+      - '.github/workflows/parity.yml'
+  pull_request:
+    paths:
+      - 'engine/sbom/**'
+      - 'engine/internal/ingestion/**'
+      - 'engine/internal/domain/sbom.go'
+      - 'engine/internal/domain/packageversion.go'
+      - 'native/**'
+      - 'schemas/native-ipc.md'
+      - '.github/workflows/parity.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: parity-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  parity:
+    name: TestParserParity
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: engine/go.sum
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Cache cargo + target/
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/target
+          key: ${{ runner.os }}-parity-cargo-${{ hashFiles('native/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-parity-cargo-
+
+      - name: Prebuild rampart-native (release)
+        # Parity test's `ensureNativeBinary` would otherwise pay this
+        # in the middle of a Go test — slower and noisier. Build
+        # once, spawn the binary from the test.
+        working-directory: native
+        run: cargo build --release --bin rampart-native --quiet
+
+      - name: Parity test
+        working-directory: engine
+        run: |
+          # Parity tests + error tests, verbose for CI log archaeology.
+          go test -run 'TestParserParity(_Errors)?$' -v ./sbom/npm/...
+
+      - name: Upload rampart-native binary on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rampart-native-debug
+          path: native/target/release/rampart-native
+          retention-days: 3
