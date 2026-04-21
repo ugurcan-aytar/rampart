@@ -3,7 +3,7 @@
 # Cross-compiles four artifacts per tag push:
 #   engine            (engine/cmd/engine)
 #   rampart           (cli/cmd/rampart)
-#   rampart-precommit (integrations/precommit-hook/cmd/precommit)
+#   rampart-precommit (integrations/precommit-hook/cmd/rampart-precommit)
 #   slack-notifier    (integrations/slack-notifier/cmd/slack-notifier)
 #
 # The Rust sidecar (rampart-native) ships its own release artifacts
@@ -51,7 +51,7 @@ builds:
       - -X main.commit={{.Commit}}
 
   - id: precommit-hook
-    main: ./cmd/precommit
+    main: ./cmd/rampart-precommit
     dir: integrations/precommit-hook
     binary: rampart-precommit
     env: [CGO_ENABLED=0]
