@@ -1,38 +1,52 @@
 # Schemas
 
-Single source of truth for rampart's wire contracts. Two files:
+Single source of truth for rampart's wire contracts. Generated
+artefacts (Go server stub + types, TypeScript types) are written
+back into the consumer packages and committed to the repo; CI fails
+if the schema changes without regenerating.
 
-| File | Role | Generated from this → |
+## Files
+
+| File | Role | Generated artefacts |
 |---|---|---|
-| `openapi.yaml` | HTTP + SSE contract (live in Phase 1) | Go types at `engine/api/gen/`, TS types at `backstage/plugins/rampart/src/api/gen/schema.ts` |
-| `cloudevents.yaml` | External event-bus envelope (Phase 2) | Not yet wired — reference only |
+| `openapi.yaml` | HTTP + SSE contract for the engine | Go server stub at `engine/api/gen/`, Go client types, TypeScript types at `backstage/plugins/rampart/src/api/gen/schema.ts` |
+| `native-ipc.md` | Wire protocol between the engine and the Rust sidecar over a Unix Domain Socket | hand-rolled Rust + Go codecs (`engine/internal/native/`, `native/crates/rampart-native/`) |
+| `cloudevents.yaml` | External event-bus envelope, reference only — not yet wired into a producer or consumer | none |
 
 ## Regenerate
 
 ```bash
-make gen         # Go + TS
+make gen         # Go + TypeScript
 make gen-go      # Go types only (oapi-codegen)
-make gen-ts      # TS types only (openapi-typescript)
+make gen-ts      # TypeScript types only (openapi-typescript)
 ```
 
-CI gate: `make gen && git diff --exit-code` — if schema changed but the
-generated artefacts weren't committed, the build fails.
+The CI gate `gen-check.yml` runs `make gen` and asserts
+`git diff --exit-code` — if `openapi.yaml` was edited but the
+generated artefacts weren't committed, the build fails with a diff
+summary.
 
 ## Policy
 
-- **Every endpoint** has `operationId`, `summary`, `tags`, at least one
-  response with a `$ref`'d schema. No inline schemas.
-- **Every schema** has `required` + typed properties + `description` or
-  `example` for the non-obvious ones. Enums are locked in — changing a
-  value is a breaking change (mirror in `engine/internal/domain/*.go`).
-- **No duplication.** Shared types (Severity, IncidentState, Error,
-  PackageVersion, …) live once under `components/schemas` and are
-  `$ref`'d everywhere.
-- **SSE (`/v1/stream`)**: discriminated oneOf on `type`. TS narrows
-  automatically; Go gets a union via oapi-codegen. The actual SSE framer
-  is a hand-written adapter (see `engine/internal/api/sse.go`, Adım 3
-  Part 2) because oapi-codegen does not produce `text/event-stream`
-  handlers.
-- **Breaking changes** bump `info.version` (semver-ish: `0.MINOR.PATCH`
-  pre-1.0, `MAJOR.MINOR.PATCH` post-1.0) and add an ADR under
-  `docs/decisions/`.
+- **Every endpoint** has `operationId`, `summary`, `tags`, and at
+  least one response with a `$ref`'d schema. No inline schemas in
+  responses.
+- **Every schema** has `required` + typed properties + a
+  `description` or `example` for the non-obvious fields. Enums are
+  locked in — changing a value is a breaking change and must be
+  mirrored in `engine/internal/domain/*.go`.
+- **No duplication.** Shared types (`Severity`, `IncidentState`,
+  `Error`, `PackageVersion`, …) live once under
+  `components/schemas` and are `$ref`'d everywhere they appear.
+- **SSE (`/v1/stream`)** uses a discriminated `oneOf` on `type`.
+  TypeScript narrows automatically; Go gets a generated union via
+  oapi-codegen. The actual `text/event-stream` framer is hand-rolled
+  in `engine/internal/api/sse.go` because oapi-codegen does not
+  produce SSE handlers.
+- **Breaking changes** bump `info.version` (semver-ish:
+  `0.MINOR.PATCH` pre-1.0, `MAJOR.MINOR.PATCH` post-1.0) and add
+  an ADR under `docs/decisions/`.
+
+## License
+
+MIT — see [LICENSE](../LICENSE).

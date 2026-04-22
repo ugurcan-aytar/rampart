@@ -1,11 +1,55 @@
 # rampart example Backstage app
 
-Minimal shell for demonstrating the three rampart plugins end-to-end.
-Full app structure (`packages/app`, `packages/backend`, React bootstrap,
-Webpack config) lands in Adım 7 when the demo stack needs it.
+The reference Backstage app that wires the three rampart plugins
+(`rampart`, `rampart-backend`, `scaffolder-rampart-actions`) into a
+runnable container. Used as the platform-team quickstart in the
+[root README](../../../README.md#path-3--platform-team-backstage)
+and as the live target for the Playwright e2e suite under `e2e/`.
 
-Today this directory owns one file of substance: `app-config.yaml`,
-which both the frontend plugin (via `rampart.baseUrl`) and the backend
-plugin (via `rampart.baseUrl` + `rampart.catalogSyncInterval`) consume.
-Wire-up instructions for `packages/backend/src/index.ts` and
-`packages/app/src/App.tsx` are inline in each plugin's README.
+## What's here
+
+```
+backstage/examples/app/
+├── app-config.yaml          # rampart.baseUrl, catalog locations, auth
+├── packages/app/            # frontend bootstrap + sidebar wiring
+├── packages/backend/        # backend bootstrap + plugin registration
+├── Dockerfile               # multi-stage build → ~770 MiB image
+└── package.json             # workspace root for the app
+```
+
+`app-config.yaml` is the file most operators edit: it carries
+`rampart.baseUrl` for the frontend `RampartClient` and the
+`rampart.catalogSyncInterval` consumed by the backend plugin.
+
+## Run
+
+The container image is published with every release at
+`ghcr.io/ugurcan-aytar/rampart-backstage:0.1.0`. From a fresh
+checkout:
+
+```bash
+make demo-axios            # brings up the full five-service stack
+open http://localhost:3000
+```
+
+To iterate locally without Docker:
+
+```bash
+yarn install
+yarn workspace app start   # frontend on :3000, backend on :7007
+```
+
+## Plugin wiring
+
+The example app demonstrates the canonical wiring for each plugin —
+read its `packages/app/src/App.tsx` for the frontend integration and
+`packages/backend/src/index.ts` for the backend integration. Both
+files are short and meant to be copy-pasted into a real Backstage
+deployment.
+
+## License
+
+MIT — see [LICENSE](../../../LICENSE).
+
+Source:
+[github.com/ugurcan-aytar/rampart](https://github.com/ugurcan-aytar/rampart).

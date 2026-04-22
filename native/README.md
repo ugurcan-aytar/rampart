@@ -1,44 +1,44 @@
 # rampart-native
 
-Rust sidecar for the rampart engine. Parses npm lockfiles and answers
-over a Unix Domain Socket; byte-identical to the Go parser at
-`engine/sbom/npm/parser.go` — every valid fixture round-trips through
-the parity test in `engine/sbom/npm/parity_test.go`.
+Rust sidecar for the rampart engine. Parses npm `package-lock.json`
+files (lockfileVersion 3) and answers the engine over a Unix Domain
+Socket. Byte-identical to the Go parser at
+`engine/sbom/npm/parser.go` — every fixture round-trips through the
+parity test in `engine/sbom/npm/parity_test.go`.
 
-The sidecar's value at Phase 1 is **architectural isolation** (separate
-process, separate FS mount, zero cgo in the Go build, independent
-release cadence), not throughput. Current measurements show the
-in-process Go parser winning at every input size we've benchmarked —
-the full table and an honest verdict live at
-`docs/benchmarks/sbom-parser.md`. ADR-0005 records the trade-off and
-the Phase-2 levers that could change the picture.
+The sidecar's value is **architectural isolation**: a separate
+process, a separate filesystem mount, no cgo in the Go build, an
+independent release cadence. It is not a throughput win — the
+in-process Go parser wins at every input size measured. The full
+table and the methodology live at
+[`docs/benchmarks/sbom-parser.md`](../docs/benchmarks/sbom-parser.md);
+the trade-off is documented in
+[ADR-0005](../docs/decisions/0005-no-cgo-rust-via-uds.md).
 
-Architecture: ADR-0005 — `docs/decisions/0005-no-cgo-rust-via-uds.md`.
-Wire protocol: `schemas/native-ipc.md`.
+Wire protocol: [`schemas/native-ipc.md`](../schemas/native-ipc.md).
 
-## Build
+## Installation
+
+Pre-built binaries for every release at
+`https://github.com/ugurcan-aytar/rampart/releases/latest`
+(linux-x86_64-musl, linux-aarch64-musl, macOS x86_64 + aarch64).
+Container image at
+`ghcr.io/ugurcan-aytar/rampart-native:0.1.0` (multi-arch).
+
+From source:
 
 ```bash
 cd native
-cargo build --workspace                  # debug
-cargo build --workspace --release        # distribution
+cargo build --workspace --release
 ```
 
-Produces `target/release/rampart-native` — a single static-ish binary
-(with the system libc + TLS certs as the only dynamic deps).
-
-Lints the project ships clean under:
-
-```bash
-cargo test --workspace
-cargo clippy --workspace -- -D warnings
-cargo fmt --check
-```
+Produces `target/release/rampart-native` — a single static-ish
+binary (system libc + TLS roots are the only dynamic dependencies).
 
 ## Run
 
 ```bash
-# Binds /tmp/rampart-native.sock by default. Override with env.
+# Binds /tmp/rampart-native.sock by default.
 ./target/release/rampart-native
 
 # Custom socket + JSON logs:
@@ -48,32 +48,34 @@ RUST_LOG=info \
 ./target/release/rampart-native
 ```
 
-Stop with SIGINT or SIGTERM — the process cleans up its socket file on
-exit.
+The process cleans up its socket file on `SIGINT` / `SIGTERM`.
+
+In Docker Compose (opt-in via the `native` profile):
+
+```bash
+docker compose --profile native up engine rampart-native
+```
+
+The engine speaks the binary-envelope protocol on the UDS and falls
+back to the in-process Go parser when the sidecar is unreachable
+(failure modes are surfaced as `parser.fallback` events on
+`/v1/stream`, never silent).
 
 ## Smoke test
 
 ```bash
-# Terminal 1:
+# Terminal 1
 ./target/release/rampart-native
 
-# Terminal 2 — Ping over UDS, via socat:
-printf '%s\n' '{"id":"p1","type":"ping"}' | socat - UNIX-CONNECT:/tmp/rampart-native.sock
-# (if you have python3, a length-prefix helper is in scripts/native-ping.py)
-```
-
-For a real round-trip parse, drive through the Go engine:
-
-```bash
-# With the server running in another terminal:
+# Terminal 2 — drive a real round-trip parse through the engine:
 go run ./engine/cmd/engine parse-sbom \
     --parser native \
     --native-socket /tmp/rampart-native.sock \
     engine/testdata/lockfiles/axios-compromise.json
 ```
 
-stderr prints `parse-sbom: strategy=native socket=/tmp/rampart-native.sock bytes=765`,
-stdout prints the parsed SBOM as indented JSON.
+stderr prints `parse-sbom: strategy=native socket=...
+bytes=765`; stdout prints the parsed SBOM as indented JSON.
 
 ## Workspace layout
 
@@ -81,7 +83,7 @@ stdout prints the parsed SBOM as indented JSON.
 native/
 ├── Cargo.toml                       # workspace manifest, shared deps
 ├── crates/
-│   ├── rampart-native/              # library — parser, protocol, ipc server
+│   ├── rampart-native/              # library — parser, protocol, IPC server
 │   │   └── src/{lib,parser,protocol,ipc}.rs
 │   └── rampart-native-cli/          # thin binary wrapper
 │       └── src/main.rs
@@ -89,32 +91,50 @@ native/
 ```
 
 The symlink matters: the Go parity test reads from
-`engine/testdata/lockfiles/` while Rust-side integration tests (Phase 2)
-can read from `native/testdata/lockfiles/`. Both paths resolve to the
-same inode. Linux + macOS only — Windows users need
+`engine/testdata/lockfiles/`; Rust-side integration tests read from
+`native/testdata/lockfiles/`. Both paths resolve to the same inode.
+Linux + macOS only — Windows users need
 `git config core.symlinks true` before cloning.
+
+## Test
+
+```bash
+cargo test --workspace
+cargo clippy --workspace -- -D warnings
+cargo fmt --check
+```
+
+The CI gates on all three (see `.github/workflows/native.yml`),
+plus `cargo audit` and `cargo deny check` against the workspace.
 
 ## Dependencies
 
 Runtime crates (workspace-shared, declared in `native/Cargo.toml`):
 
-| Crate              | Purpose                                                 |
-|--------------------|---------------------------------------------------------|
-| `serde`            | derive-macro serialisation (https://serde.rs)           |
-| `serde_json`       | JSON codec for wire + SBOM (not simd-json — see ADR-0005) |
-| `tokio` (current-thread) | UDS listener + per-connection tasks               |
-| `thiserror`        | error enums for ParseError                              |
-| `anyhow`           | CLI-level error wrapping                                |
-| `tracing` + `tracing-subscriber` | structured logging, json formatter opt |
-| `base64`           | payload encoding                                        |
+| Crate | Purpose |
+|---|---|
+| `serde` | derive-macro serialisation |
+| `serde_json` | JSON codec for wire + SBOM |
+| `tokio` (current-thread) | UDS listener + per-connection tasks |
+| `thiserror` | error enums for `ParseError` |
+| `anyhow` | CLI-level error wrapping |
+| `tracing` + `tracing-subscriber` | structured logging, JSON formatter opt |
+| `base64` | payload encoding |
 
-Every entry is justified in `DEPS.md` alongside the Go deps.
+Every entry is justified in
+[`DEPS.md`](../DEPS.md) alongside the Go dependencies.
 
-## What this crate does NOT do
+## Scope
 
-- Multiple ecosystems — only `parse_npm_lockfile` today. pypi / cargo /
-  go parsers land in Phase 3.
-- Multi-process pool — single-threaded tokio runtime. Phase 2 lever.
-- Windows named-pipe transport — Phase 2; see ADR-0005 consequences.
-- IoC matching / trust evaluation — all stays engine-side. The sidecar
-  is a stateless parser.
+The sidecar today parses npm v3 lockfiles only. It does not perform
+IoC matching, trust evaluation, or any state mutation — those stay
+engine-side. The sidecar is a stateless parser. Multi-ecosystem
+parsing, multi-process pooling, and Windows named-pipe transport
+are planned.
+
+## License
+
+MIT — see [LICENSE](../LICENSE).
+
+Source and issues:
+[github.com/ugurcan-aytar/rampart](https://github.com/ugurcan-aytar/rampart).
