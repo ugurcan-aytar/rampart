@@ -1,8 +1,8 @@
-go 1.24
+go 1.24.0
 
 use (
-	./engine
 	./cli
+	./engine
 	./integrations/mock-npm-registry
 	./integrations/precommit-hook
 	./integrations/slack-notifier
