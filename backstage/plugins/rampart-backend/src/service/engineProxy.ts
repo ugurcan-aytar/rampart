@@ -24,7 +24,7 @@ export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger 
     res.json({ status: 'ok' });
   });
 
-  router.all('/v1/*', async (req: Request, res: Response) => {
+  router.all('/v1/*splat', async (req: Request, res: Response) => {
     const target = opts.baseUrl + req.path;
     try {
       const upstream = await fetch(target, {
