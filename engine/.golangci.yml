@@ -1,39 +1,61 @@
+version: "2"
+
 run:
+  # Keep the 5-minute cap — v2's default is no timeout, which on a
+  # cold-cache engine workspace has been observed to exceed 5 minutes
+  # on GitHub runners and eat the whole e2e window.
   timeout: 5m
   go: "1.23"
 
 linters:
-  disable-all: true
+  default: none
   enable:
     - errcheck
+    - gosec
     - govet
     - ineffassign
+    - misspell
+    - revive
     - staticcheck
     - unused
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # Tests deliberately construct malformed payloads and use
+      # unseeded randomness where helpful. gosec rules fire noisy
+      # positives here that obscure the real production-code hits.
+      - linters: [gosec]
+        path: _test\.go
+
+      # `domain.DomainEvent` reads intentionally — it is the
+      # package-spanning interface every event type satisfies, and
+      # a rename ("Event" would be too generic, collides with
+      # `events.Bus.Publish(Event)` callers in every consumer) would
+      # cascade into the api + SSE + bus packages for no behaviour
+      # change. Caller-side name is short anyway: `events.Publish(x)`
+      # is what appears in the code, not `domain.DomainEvent`. Revive's
+      # stutter rule is correct-in-general but wrong here.
+      - linters: [revive]
+        path: internal/domain/events\.go
+        text: stutters
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+formatters:
+  enable:
     - gofmt
     - goimports
-    - revive
-    - gosec
-    - misspell
-
-issues:
-  exclude-rules:
-    # Tests deliberately construct malformed payloads and use
-    # unseeded randomness where helpful. gosec rules fire noisy
-    # positives here that obscure the real production-code hits.
-    - path: _test\.go
-      linters:
-        - gosec
-
-    # `domain.DomainEvent` reads intentionally — it's the
-    # package-spanning interface every event type satisfies, and
-    # a rename ("Event" would be too generic, collides with
-    # `events.Bus.Publish(Event)` callers in every consumer) would
-    # cascade into the api + SSE + bus packages for no behaviour
-    # change. Caller-side name is short anyway: `events.Publish(x)`
-    # is what appears in the code, not `domain.DomainEvent`. Revive's
-    # stutter rule is correct-in-general but wrong here.
-    - path: internal/domain/events\.go
-      linters:
-        - revive
-      text: "stutters"
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
