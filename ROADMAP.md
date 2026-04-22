@@ -1,23 +1,29 @@
 # Roadmap
 
-Four horizons, in order of commitment.
+Versioned horizons, in order of commitment.
 
 - **v0.1.1** is housekeeping — release-engineering debt carried from
   v0.1.0. Small patch, 1–2 weeks.
-- **v0.2.0** is the major feature release. Production-grade security,
-  multi-ecosystem parsers, frontend depth, and the first real
-  behavioural differentiator (publisher-anomaly detection).
-- **v0.3.0–v0.9.0** are feature horizons with concrete scope per
+- **v0.2.0** is the first major feature release. Production-grade
+  security, multi-ecosystem parsers, frontend depth, and the first
+  real behavioural differentiator (publisher-anomaly detection).
+- **v0.3.0 onwards** are feature horizons with concrete scope per
   release. Multi-repo aggregation, LLM augmentation, sandboxing,
-  integrations, distribution.
-- **v1.0.0** is the production commitment: enterprise auth, plugin
-  sandbox, performance index, SOC 2 / ISO 27001 readiness. API
-  stability guarantee starts here.
+  integrations, distribution, performance at fleet scale.
 
-Phase 2 / Phase 3 / Phase 4 blocks below describe *themes*; individual
-line items are scheduled into specific releases. The **non-goals**
-section is a discipline doc — every new proposal gets checked against
-it before entering any release scope.
+Rampart stays on 0.x until real adoption patterns tell us which
+parts of `/v1/*` deserve a stability guarantee. 0.x doesn't mean
+"unstable" — it means "we reserve the right to learn from users
+before committing to backwards compatibility." Projects like
+kubernetes, terraform, and many of the Rust ecosystem's most used
+crates stayed on 0.x for years before cutting 1.0; some mature
+projects never cut 1.0 deliberately. Rampart may or may not reach
+1.0. The question is deliberately deferred.
+
+Phase-shaped themes below describe *areas of work*; individual line
+items are scheduled into specific releases. The **non-goals**
+section is a discipline doc — every new proposal gets checked
+against it before entering any release scope.
 
 ---
 
@@ -163,7 +169,7 @@ maintainers don't re-attempt prematurely.
 ## v0.2.0 — major feature release (target: 6–10 weeks after v0.1.1)
 
 This is the release where rampart goes from "scaffolded working
-system" to "production-competitive supply-chain defense tool." Four
+system" to "production-competitive supply-chain defense tool." Six
 themes, shipping together so the release has a coherent story.
 
 ### Theme A — Production-grade security posture
@@ -240,7 +246,7 @@ v0.2.0 closes the loop and makes "no CORS config needed" real.
 - Ordering guarantee: `Component` with dependencies is created after
   its dependencies (topological push). Engine schema already supports
   this via `depends_on` foreign keys once Postgres storage lands
-  (Theme D — included in v0.2.0 below).
+  (Theme D below).
 - **Acceptance**: start the demo stack, add a Component to
   Backstage's catalog YAML, see it appear in `/v1/components`
   within one tick interval (default 30 s).
@@ -287,7 +293,7 @@ false impression from the v0.1.0 README skim; this theme kills it.
   `uv.lock` (TOML, similar to poetry).
 - No Rust sidecar parity for PyPI in v0.2.0 — single-engine parser
   is acceptable; the isolation / parity story moves to Wasm in
-  v0.4.0+.
+  v0.5.0+.
 - **Acceptance**: `rampart scan path/to/requirements.txt`,
   `rampart scan path/to/poetry.lock`, `rampart scan path/to/uv.lock`
   — all produce valid SBOMs, matched against a PyPI IoC fixture pack.
@@ -585,67 +591,158 @@ shipping artefact.
 
 ---
 
-## v0.9.0 — pre-1.0 hardening (target: 8–12 weeks after v0.6.0)
+## v0.7.0 — enterprise foundations (target: 6–10 weeks after v0.6.0)
 
-Everything that needs to be true before we commit to v1.0 API
-stability.
+Features that enterprise deployments ask for first. Not
+"enterprise-ready" as a marketing claim — just the table-stakes
+capabilities for teams with more than one squad.
 
-### Theme R — Performance at fleet scale
+### Theme R — OIDC / SAML provider integration
 
-- **Roaring-bitmap blast-radius index**: v0.1.x's query is
-  O(IoCs × SBOMs). v0.9.0 builds a bitmap per
-  `(ecosystem, package, version)` answering in O(|affected components|).
+- Keycloak, Okta, Auth0, Azure AD configuration templates.
+- Token exchange flow: provider-issued token → rampart-issued
+  short-lived token (backed by the A1 JWT middleware from v0.2.0).
+- Single-sign-on for the Backstage integration; identities flow
+  through to the engine's audit trail.
+
+### Theme S — RBAC
+
+- Role model: `admin`, `responder`, `reader` at minimum. Roles
+  scope components and incidents by team.
+- Route-level enforcement in the engine middleware (already
+  scope-aware from A1).
+- Frontend enforcement: incidents outside the signed-in user's
+  team are filtered from the IncidentDashboard.
+
+### Theme T — Full audit log
+
+- Append-only audit table: who transitioned which incident, when,
+  who approved, from what IP.
+- Retention policy configurable (default 365 days).
+- Export path: `GET /v1/audit?from=<ts>&to=<ts>` returns JSON Lines
+  for downstream SIEM ingestion.
+
+---
+
+## v0.8.0 — plugin ecosystem (target: 6–10 weeks after v0.7.0)
+
+Opens rampart to third-party detectors without opening the engine
+to third-party bugs.
+
+### Theme U — Wasm plugin sandbox
+
+- Operators ship bespoke IoC logic as a wasm module with a
+  limited-capability API (read lockfile bytes, return IoC list; no
+  filesystem, no network, no env).
+- Rampart core stays insulated from plugin bugs.
+- Plugin manifest: plugin name, author, version, capabilities
+  requested, signature (cosign-verifiable).
+- Plugin loading path: `rampart plugin install <url>`,
+  `rampart plugin list`, `rampart plugin remove`.
+
+### Theme V — Plugin registry (proof of concept)
+
+- Opt-in community plugin registry — operators can publish
+  wasm plugins to a public index. Listing-only, no automatic
+  install.
+- Reference implementation: a plugin that flags packages with
+  typo-squatting patterns (Levenshtein distance against top-1000
+  npm packages).
+
+---
+
+## v0.9.0 — performance + API audit (target: 8–12 weeks after v0.8.0)
+
+Everything that would need to be true before rampart could
+responsibly consider cutting 1.0. Whether 1.0 ever happens is an
+adoption-driven decision taken some time after v0.9.0 ships — likely
+much later, possibly never.
+
+### Theme W — Roaring-bitmap blast-radius index
+
+- v0.1.x's query is O(IoCs × SBOMs). v0.9.0 builds a bitmap per
+  `(ecosystem, package, version)` answering in
+  O(|affected components|).
 - **Target**: sub-500 ms on a 100k-component fleet. Benchmark
   included in the release notes with reproducible harness.
 
-### Theme S — API stability audit
+### Theme X — API stability audit
 
 - Full `/v1/*` API review. Any endpoint that's likely to change
-  post-1.0 either stabilises or moves to `/v1alpha/` with a
-  documented promotion path.
+  post-adoption either stabilises now or moves to `/v1alpha/` with
+  a documented promotion path.
 - OpenAPI spec annotated with per-endpoint stability labels.
-- SemVer contract: v1.x patches never break `/v1/*` behaviour;
-  v2.0 required for any breaking change.
+- Per-endpoint stability labels replace a single 1.0 SemVer
+  contract. Users can pin against `stable` endpoints without
+  requiring rampart to commit to a frozen `/v1/*` surface.
 
-### Theme T — SOC 2 / ISO 27001 preparedness
+### Theme Y — Threat model + SOC 2 / ISO 27001 preparedness
 
-- Audit log schema review (who did what, when, how).
+- `docs/security/threat-model.md` shipping the full STRIDE /
+  MITRE ATT&CK mapping.
 - Secret handling review (SECURITY.md updated with the full chain:
   env → OIDC → short-lived tokens).
-- Threat model document (docs/security/threat-model.md).
+- Audit log schema review (who did what, when, how).
 - No stored credentials on disk — every secret is either an env
   var or an OIDC-issued short-lived token.
 
 ---
 
-## v1.0.0 — production commitment (target: 4–6 weeks after v0.9.0)
+## Beyond v0.9.0
 
-The 1.0 release commits to API stability and long-term support. API
-`v1` is frozen; breaking changes require `v2`.
+The next release after v0.9.0 is **v0.10.0**, not 1.0.
 
-### Theme U — Enterprise auth
+Staying on 0.x is a deliberate posture, not an accident. Rampart
+ships quality features under SemVer minor releases; the 0.x prefix
+signals to users "we might still learn something that reshapes
+`/v1/*`, and you should design your integration to tolerate that."
+Projects that took this posture include kubernetes (0.x for 18
+months, shipped 1.0 only after GA commitment), terraform (0.x for
+5+ years), and a long tail of Rust ecosystem crates where the
+maintainers decided 1.0 was a promise they weren't ready to make.
 
-- OIDC / SAML provider integration (Keycloak, Okta, Auth0).
-- RBAC scoping: components and incidents scoped by team.
-- Full audit log: who transitioned which incident, when, who
-  approved.
-- SOC 2 / ISO 27001 preparedness (Theme T already ran in v0.9.0).
+**What would trigger a 1.0 discussion**, post-v0.9.0:
 
-### Theme V — Wasm plugin sandbox
+- ≥1 year of zero breaking changes across `/v1/*` (natural
+  stability proven, not asserted).
+- External operators running rampart in production and surfacing
+  real-world-usage API friction that gets fixed without a break.
+- A written support policy (which versions get patches for how
+  long, how security issues are handled, what the upgrade
+  commitment is).
 
-- Operators ship bespoke IoC logic as a wasm module with a
-  limited-capability API.
-- Rampart core stays insulated from plugin bugs.
-- Opens the door to an opt-in community plugin marketplace
-  (post-1.0 follow-up).
+Without all three, 1.0 stays deferred and the release cadence
+continues as v0.10.x, v0.11.x, v0.12.x, and onward — each with
+concrete themes, each maintaining the SemVer convention that any
+`/v1/*` break is called out in release notes with a migration path.
 
-### Theme W — 1.0 release content
+### v0.10.0 candidate themes (tentative)
 
-- Blog post with the v0.1.0 → v1.0 arc.
-- Hacker News / Lobste.rs / r/programming launch set.
-- Conference talk pitch (KubeCon, SREcon, FOSDEM).
-- Comparison page vs Socket / Snyk / GitHub Advisory — feature
-  matrix, honest about where rampart is equal / better / worse.
+Not yet committed; these are the items that naturally follow v0.9.0
+but depend on v0.9.0's audit outcomes:
+
+- **Replication + HA**: engine instances behind a load balancer;
+  postgres read replicas; incident state machine survives failover.
+- **Supply-chain SBOM attestation chain**: verify cosign signatures
+  on upstream dependencies during scan, not just on rampart's own
+  releases. Reject scans that include unsigned critical deps.
+- **Policy engine**: operator-defined policies (`IoC severity=critical
+  → auto-remediate via PR`). OPA / Rego or a simpler DSL — TBD per
+  v0.9.0 learnings.
+
+### Further horizons (no target release)
+
+The tail of items that don't yet have a scheduled release window.
+Re-evaluated each time the next v0.N.0 plan opens:
+
+- Multi-source IoC feed federation depth (v0.3.0 ships the first
+  four sources; later releases add specialty feeds like MITRE D3FEND,
+  private enterprise advisory feeds, reachability-enriched feeds).
+- Native desktop app (wrap the frontend as a Tauri / Electron
+  build for operators who don't run Backstage).
+- Agent-driven triage (a rampart-internal LLM agent that runs the
+  remediation loop end-to-end, gated by the core-determinism rule
+  from v0.4.0 — agent suggests, human approves, rampart applies).
 
 ---
 
@@ -676,6 +773,11 @@ it. Saying no early is cheaper than walking it back later.
 - **No training on rampart telemetry.** If a user chooses to enable
   LLM features pointing at a remote backend, rampart guarantees the
   prompts and responses never feed any training set.
+- **No premature 1.0.** Rampart stays on 0.x until adoption data
+  says otherwise. 1.0 would require an explicit support commitment
+  that current rampart maintainership is not ready to make.
+  v0.10.0, v0.11.0, v0.12.0 are the expected continuation — not a
+  placeholder for 1.0.
 
 ---
 
@@ -694,10 +796,13 @@ it. Saying no early is cheaper than walking it back later.
   verdict (Theme N) documented.
 - **v0.6.0**: ≥3 SIEM/webhook integrations shipped + at least one
   IDE integration (VS Code or JetBrains).
+- **v0.7.0**: OIDC/SAML + RBAC + full audit log — enterprise
+  foundations in place, without the marketing label.
+- **v0.8.0**: Wasm plugin sandbox + reference plugin + registry PoC.
 - **v0.9.0**: fleet performance target hit. API stability audit
   complete. Threat model shipped.
-- **v1.0.0**: enterprise auth shipped. Wasm plugin sandbox shipped.
-  API `v1` frozen.
+- **v0.10.0+**: themes committed per release, informed by v0.9.0's
+  audit outcomes. No pre-committed 1.0 target.
 
 ---
 
