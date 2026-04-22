@@ -8,42 +8,32 @@ import { createTemplateAction } from '@backstage/plugin-scaffolder-node';
  * — e.g. adding a `.npmrc` entry, updating a workflow, or bumping an
  * unrelated dependency to stabilise.
  *
- * Phase 1 skeleton: validates input + logs. Phase 2 does the real
- * clone + branch + commit + PR flow via the VCS integration of the
- * hosting Backstage app.
+ * v0.1.0 skeleton: validates input + logs. Real implementation does
+ * the clone + branch + commit + PR flow via the VCS integration of
+ * the hosting Backstage app.
  */
-export const openRemediationPRAction = createTemplateAction<{
-  componentRef: string;
-  title: string;
-  body: string;
-  branch: string;
-  files?: Array<{ path: string; content: string }>;
-  labels?: string[];
-}>({
+export const openRemediationPRAction = createTemplateAction({
   id: 'rampart:open-pr',
   description: 'Open a remediation pull request against a Component repo.',
   schema: {
     input: {
-      type: 'object',
-      required: ['componentRef', 'title', 'body', 'branch'],
-      properties: {
-        componentRef: { type: 'string' },
-        title: { type: 'string' },
-        body: { type: 'string', description: 'PR description (markdown).' },
-        branch: { type: 'string', description: 'New branch name.' },
-        files: {
-          type: 'array',
-          items: {
-            type: 'object',
-            required: ['path', 'content'],
-            properties: {
-              path: { type: 'string' },
-              content: { type: 'string' },
-            },
-          },
-        },
-        labels: { type: 'array', items: { type: 'string' } },
-      },
+      componentRef: z =>
+        z.string().describe('kind:Component/namespace/name'),
+      title: z => z.string().describe('PR title.'),
+      body: z => z.string().describe('PR description (markdown).'),
+      branch: z => z.string().describe('New branch name.'),
+      files: z =>
+        z
+          .array(
+            z.object({
+              path: z.string(),
+              content: z.string(),
+            }),
+          )
+          .optional()
+          .describe('Files to write on the new branch.'),
+      labels: z =>
+        z.array(z.string()).optional().describe('PR labels to apply.'),
     },
   },
   async handler(ctx) {
@@ -51,7 +41,7 @@ export const openRemediationPRAction = createTemplateAction<{
     ctx.logger.info(
       `rampart:open-pr: would open PR "${title}" on branch ${branch} in ${componentRef} (${files.length} file(s), labels=${labels.join(',') || 'none'})`,
     );
-    // Phase 2: use the scaffolder's GitRepoIntegration service to
-    // clone, write files, commit, push, open PR.
+    // Real implementation: use the scaffolder's GitRepoIntegration service
+    // to clone, write files, commit, push, open PR.
   },
 });

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Page, Header, Content, Table } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 
