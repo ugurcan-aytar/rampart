@@ -61,8 +61,7 @@ export interface paths {
             query?: never;
             header?: never;
             path: {
-                /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`.
-                 *      */
+                /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`. */
                 componentRef: components["parameters"]["ComponentRef"];
             };
             cookie?: never;
@@ -171,7 +170,6 @@ export interface paths {
          *     Google `:transition` custom-verb form, because Go 1.22+
          *     `net/http.ServeMux` rejects wildcard segments followed by `:suffix`.
          *     Per ADR-0003 the engine uses stdlib routing — no chi/gorilla.
-         *
          */
         post: operations["TransitionIncident"];
         delete?: never;
@@ -233,7 +231,6 @@ export interface paths {
          *     the `/v1/stream` route is served by a hand-written adapter that
          *     lives *outside* the generated mux (see `engine/internal/api/sse.go`
          *     in Adım 3 Part 2 — design first, approved, then implemented).
-         *
          */
         get: operations["Stream"];
         put?: never;
@@ -345,9 +342,10 @@ export interface components {
         Severity: "low" | "medium" | "high" | "critical";
         /** @enum {string} */
         IoCKind: "packageVersion" | "packageRange" | "publisherAnomaly";
-        /** @description Tagged union: `kind` names which of the three body sub-objects is set.
+        /**
+         * @description Tagged union: `kind` names which of the three body sub-objects is set.
          *     Engine-side `IoC.Validate()` enforces `set == 1 && matches kind`.
-         *      */
+         */
         IoC: {
             /** @description ULID */
             id: string;
@@ -403,7 +401,6 @@ export interface components {
             /**
              * @description Signal catalog — any change here is a breaking contract change
              *     and must be mirrored in `engine/internal/domain/publisher.go`.
-             *
              * @enum {string}
              */
             type: "new_maintainer_email" | "dormant_account_active" | "missing_git_tag" | "off_hours_publish" | "oidc_regression" | "version_jump" | "low_download_day_attack";
@@ -421,7 +418,6 @@ export interface components {
          * @description State machine: pending → triaged → acknowledged → remediating → closed.
          *     Any non-terminal state may transition to `dismissed`.
          *     `closed` and `dismissed` are terminal.
-         *
          * @enum {string}
          */
         IncidentState: "pending" | "triaged" | "acknowledged" | "remediating" | "closed" | "dismissed";
@@ -434,8 +430,7 @@ export interface components {
             openedAt: string;
             /** Format: date-time */
             lastTransitionedAt: string;
-            /** @description Blast radius as of `openedAt` — frozen; new SBOMs do not mutate it.
-             *      */
+            /** @description Blast radius as of `openedAt` — frozen; new SBOMs do not mutate it. */
             affectedComponentsSnapshot?: string[];
             remediations?: components["schemas"]["Remediation"][];
         };
@@ -540,10 +535,11 @@ export interface components {
              */
             type: "ioc.matched";
         };
-        /** @description A domain event as it travels over SSE. Discriminator field is `type`;
+        /**
+         * @description A domain event as it travels over SSE. Discriminator field is `type`;
          *     TS clients narrow by `type`, Go clients type-switch on the generated
          *     union after unmarshalling.
-         *      */
+         */
         StreamEvent: components["schemas"]["IncidentOpenedEvent"] | components["schemas"]["IncidentTransitionedEvent"] | components["schemas"]["RemediationAddedEvent"] | components["schemas"]["SBOMIngestedEvent"] | components["schemas"]["IoCMatchedEvent"];
     };
     responses: {
@@ -580,8 +576,7 @@ export interface components {
         Cursor: string;
         /** @description Maximum items per page. */
         Limit: number;
-        /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`.
-         *      */
+        /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`. */
         ComponentRef: string;
     };
     requestBodies: never;
@@ -686,8 +681,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`.
-                 *      */
+                /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`. */
                 componentRef: components["parameters"]["ComponentRef"];
             };
             cookie?: never;
@@ -711,8 +705,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`.
-                 *      */
+                /** @description Component reference in the form `kind:<Kind>/<namespace>/<name>`. */
                 componentRef: components["parameters"]["ComponentRef"];
             };
             cookie?: never;
