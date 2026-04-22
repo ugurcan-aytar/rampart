@@ -156,6 +156,42 @@ because v0.1.1 consciously does not close them:
   reverse proxy upstream. Full auth layer is Phase 2 cross-cutting
   work.
 
+### Deferred ecosystem upgrades (re-evaluation triggers)
+
+Closed Dependabot PRs that need specific upstream readiness before
+re-opening. Listed here so future maintainers don't re-attempt them
+prematurely.
+
+- **Node 24 LTS migration** (currently on Node 20). Closed PRs
+  #16 (`node:25-bookworm-slim`) and #23 (`@types/node@25`) — paired.
+  - Blocked on: `node:24-bookworm-slim` Docker image availability
+    (Node 24 LTS ships October 2026; image typically lands within
+    a week of release).
+  - Why we skipped Node 25: odd-numbered, ~6-month support window,
+    EoL April 2027 — not viable for a production supply-chain tool.
+  - Side issue surfaced during the test: Node 25 dropped bundled
+    corepack from official images, breaking our Yarn 4 activation
+    in `backstage/examples/app/Dockerfile`. Won't recur on Node 24
+    LTS (corepack restored).
+  - Re-evaluation trigger: `docker manifest inspect node:24-bookworm-slim`
+    succeeds AND `@backstage/cli` declares Node 24 in its
+    engines field.
+
+- **React 19 + react-router 7 migration**. Closed PR #19 (the react
+  group bump bundling `react`, `react-dom`, `@types/react`,
+  `@types/react-dom`, `react-router-dom`).
+  - Blocked on: `@backstage/core-components` upstream release that
+    accepts `react-markdown@10+`. React 19 removed the global `JSX`
+    namespace; `react-markdown@8.0.7` (current pin via
+    core-components `^8.0.0`) still references it, producing 3 tsc
+    errors in node_modules with no in-repo fix path.
+  - Forcing `react-markdown@10` via `yarn resolutions` risks
+    breaking Backstage's own markdown rendering (component prop
+    shape changed across the major).
+  - Re-evaluation trigger: the next `@backstage/core-components`
+    major (currently 0.18.x) accepts `react-markdown@^10` in its
+    peerDependencies.
+
 ---
 
 ## Phase 2 — expansion (target: Q2–Q3 2026)
