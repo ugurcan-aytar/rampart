@@ -25,10 +25,10 @@
     "dev": "backstage-cli package start --config app-config.yaml"
   },
   "dependencies": {
-    "@backstage/core-components": "^0.16.0",
+    "@backstage/core-components": "^0.18.9",
     "@backstage/core-plugin-api": "^1.10.0",
-    "@backstage/plugin-catalog-react": "^1.15.0",
-    "@backstage/theme": "^0.6.0",
+    "@backstage/plugin-catalog-react": "^2.1.4",
+    "@backstage/theme": "^0.7.3",
     "@emotion/react": "^11.13.0",
     "@emotion/styled": "^11.13.0",
     "@mui/icons-material": "^5.16.7",
@@ -41,7 +41,7 @@
   },
   "devDependencies": {
     "@backstage/app-defaults": "1.7.7",
-    "@backstage/cli": "^0.29.0",
+    "@backstage/cli": "^0.34.6",
     "@backstage/core-app-api": "1.20.0",
     "@backstage/dev-utils": "1.1.22",
     "@types/react": "18.3.3",
