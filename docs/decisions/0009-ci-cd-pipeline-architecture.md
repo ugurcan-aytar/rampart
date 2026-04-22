@@ -186,7 +186,8 @@ workflow's provenance to the registry entry.
 2. **golangci-lint v2 config format.** v2 ships new defaults + a
    breaking yaml shape. Staying on v1 (`v1.64.6`) because the
    default rule set fits rampart's code style and a repo-wide
-   v2 migration is a separate ADR.
+   v2 migration is a separate ADR — now accepted, see
+   [ADR-0010](./0010-golangci-lint-v2-migration.md).
 3. **Signed key in repo via sops or sealed-secrets.** Simpler
    than OIDC for the cosign case — drop a key, encrypt it. Rejected:
    any in-repo key leaks the moment the repo is compromised, which

@@ -114,7 +114,7 @@ func TestSubmitSBOM_MatchesExistingIoC_OpensIncidentAndEmitsSSE(t *testing.T) {
 	require.NotEmpty(t, sbom.Id)
 
 	var sawIngested, sawOpened, sawMatched bool
-	for !(sawIngested && sawOpened && sawMatched) {
+	for !sawIngested || !sawOpened || !sawMatched {
 		select {
 		case ev := <-eventCh:
 			switch e := ev.(type) {
