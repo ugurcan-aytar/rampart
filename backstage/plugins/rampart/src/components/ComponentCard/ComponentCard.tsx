@@ -1,4 +1,3 @@
-import React from 'react';
 import { InfoCard } from '@backstage/core-components';
 import { useEntity } from '@backstage/plugin-catalog-react';
 
