@@ -155,7 +155,7 @@ workflow's provenance to the registry entry.
   workflow summary surfaces them but doesn't paginate them. An
   operator deploying rampart at a paranoia level higher than
   Phase 1 needs their own `govulncheck` gate in their
-  deployment pipeline (ROADMAP's operator docs).
+  deployment pipeline.
 - **Coverage tuning is per-package.** New packages need a new
   threshold entry in `engine.yml`. Someone who adds `engine/sbom/pypi`
   without a coverage gate will dilute the total floor quietly.
@@ -164,12 +164,11 @@ workflow's provenance to the registry entry.
   automatic reminder.
 - **SHA pinning on action refs is deferred.** Phase 1 workflows
   use immutable semver tags (`actions/checkout@v4.2.2`). Full
-  commit SHA pinning via `pinact` is a Phase 2 mechanical sweep
-  (ROADMAP item 6). A malicious tag rewrite by an action
-  maintainer between Phase 1 and Phase 2 would land in a rampart
-  build. Partial mitigation: semver-pinned versions require the
-  attacker to overwrite a specific tag AFTER dependabot runs,
-  which is a visible pattern.
+  commit SHA pinning via `pinact` is a Phase 2 mechanical sweep.
+  A malicious tag rewrite by an action maintainer between Phase 1
+  and Phase 2 would land in a rampart build. Partial mitigation:
+  semver-pinned versions require the attacker to overwrite a
+  specific tag AFTER dependabot runs, which is a visible pattern.
 
 ### Neutral
 

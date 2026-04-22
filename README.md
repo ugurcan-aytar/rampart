@@ -228,8 +228,8 @@ network.
 
 **Storage is in-memory.** The engine loses all state on restart.
 Deploy behind a supervisor that can tolerate periodic restarts (k8s,
-nomad, etc.); don't rely on incident continuity across restarts.
-Postgres is on the [roadmap](./ROADMAP.md).
+nomad, etc.); don't rely on incident continuity across restarts. A
+Postgres backend is planned.
 
 **Auth is guest.** Backstage ships with `auth.providers.guest`
 enabled; swap in a real provider (OIDC, GitHub, etc.) before exposing
@@ -238,10 +238,10 @@ bypass lives in `backstage/examples/app/packages/app/src/` — replace
 it with Backstage's `SignInPage` under your provider.
 
 **Image sizes.** The Backstage production image is ~773 MiB. Further
-reductions (alpine base, more aggressive prune) are on the
-[roadmap](./ROADMAP.md) but carry tradeoffs around better-sqlite3's
-native rebuild; see the Dockerfile comments at
-`backstage/examples/app/Dockerfile` for the current shape.
+reductions (alpine base, more aggressive prune) are planned but carry
+tradeoffs around better-sqlite3's native rebuild; see the Dockerfile
+comments at `backstage/examples/app/Dockerfile` for the current
+shape.
 
 **Release artifacts are cosign-signed.** Every tarball that leaves
 the release workflow carries an SBOM attestation + a cosign keyless
@@ -252,7 +252,6 @@ signature verifiable against the GitHub OIDC issuer. See
 ## Documentation
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — domain model, event flow, storage shape
-- [ROADMAP.md](./ROADMAP.md) — what's coming next, grouped by user segment
 - [CONTRIBUTING.md](./CONTRIBUTING.md) — dev setup, supply-chain rules, PR conventions
 - [SECURITY.md](./SECURITY.md) — threat model, disclosure policy, verification
 - [CHANGELOG.md](./CHANGELOG.md) — release notes

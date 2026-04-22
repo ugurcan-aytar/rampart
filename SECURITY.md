@@ -127,7 +127,7 @@ cosign verify-attestation \
   origin so the Backstage frontend (on `:3000`) can hit the engine
   (on `:8080`) directly. Production deploys route the frontend
   through the `rampart-backend` proxy; CORS tightens then. Phase 2
-  ships this wiring (ROADMAP item 4).
+  ships this wiring.
 - **In-memory storage has no encryption-at-rest.** It also has no
   persistence — the point is moot until Postgres ships (Phase 2).
 - **No first-party auth on `/v1/*` endpoints.** Engine assumes it
@@ -136,7 +136,7 @@ cosign verify-attestation \
   etc.) in front of the engine container.
 - **pinact SHA pinning on GitHub Actions** — Phase 1 uses immutable
   semver tags (`actions/checkout@v4.2.2`); full commit SHA pins are
-  a Phase 2 sweep (ROADMAP item 6).
+  a Phase 2 sweep.
 
 ## What rampart will *not* do
 

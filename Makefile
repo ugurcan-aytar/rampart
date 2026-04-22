@@ -1,5 +1,5 @@
 # rampart — A rampart for your supply chain.
-# See CONTRIBUTING.md for dev setup; ROADMAP.md for what's implemented.
+# See CONTRIBUTING.md for dev setup.
 
 SHELL := bash
 .SHELLFLAGS := -eu -o pipefail -c

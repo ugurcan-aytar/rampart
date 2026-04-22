@@ -94,8 +94,8 @@ user segment:
 
 **Documentation.**
 
-- `README.md`, `ARCHITECTURE.md`, `ROADMAP.md`, `CONTRIBUTING.md`,
-  `SECURITY.md`, `DEPS.md`.
+- `README.md`, `ARCHITECTURE.md`, `CONTRIBUTING.md`, `SECURITY.md`,
+  `DEPS.md`.
 - Nine Architecture Decision Records under `docs/decisions/`
   (0005 through 0009 — Rust sidecar via UDS, Yarn 4 vs pnpm,
   parser placement, `enableScripts=false` compatibility, CI/CD
@@ -109,7 +109,7 @@ user segment:
 
 ### Known gaps
 
-Documented in `SECURITY.md` and scoped on the `ROADMAP.md`:
+Documented in `SECURITY.md`:
 
 - In-memory storage only — engine loses all state on restart.
   Postgres backend is on the roadmap.

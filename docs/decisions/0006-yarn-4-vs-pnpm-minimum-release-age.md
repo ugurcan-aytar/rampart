@@ -26,7 +26,7 @@ Stay on Yarn 4.6 for Phase 1. Enforce the 72 h quarantine at PR-review time via 
 - **Open gap in local install:** Between an IoC's publish timestamp and Renovate's PR gate firing, a local `yarn install` can still pull a freshly-published version. In practice the window is narrow because (a) this repo is solo-maintained; (b) Dependabot + Renovate are the only automated ingress; (c) every new dependency requires an entry in `DEPS.md` before the PR can merge.
 - **Shifted enforcement point:** The defense lives in CI/PR instead of in the package manager. This is honest but adds a moving part.
 - **Easy migration:** When Yarn 4.9 ships, flipping one key in `.yarnrc.yml` replaces the Renovate-side check. No code elsewhere has to change.
-- **Explicitly documented:** Tracked in `SECURITY.md` under *Known gaps* and in `ROADMAP.md` Phase 2.
+- **Explicitly documented:** Tracked in `SECURITY.md` under *Known gaps*.
 
 ## Alternatives considered
 
