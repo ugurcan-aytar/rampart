@@ -6947,30 +6947,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:*, @types/node@npm:>=13.7.0":
+"@types/node@npm:*, @types/node@npm:25.6.0, @types/node@npm:>=13.7.0":
   version: 25.6.0
   resolution: "@types/node@npm:25.6.0"
   dependencies:
     undici-types: "npm:~7.19.0"
   checksum: 10c0/d2d2015630ff098a201407f55f5077a20270ae4f465c739b40865cd9933b91b9c5d2b85568eadaf3db0801b91e267333ca7eb39f007428b173d1cdab4b339ac5
-  languageName: node
-  linkType: hard
-
-"@types/node@npm:20.14.15":
-  version: 20.14.15
-  resolution: "@types/node@npm:20.14.15"
-  dependencies:
-    undici-types: "npm:~5.26.4"
-  checksum: 10c0/093713db52dc544f3931a3dec9d7d8ef661f323e57becd083a7918c778cef1eb6ec32d1017bf5ade06bb06dc5c7551f4f4d749a14e40868cce44d51e54acd8ed
-  languageName: node
-  linkType: hard
-
-"@types/node@npm:22.5.0":
-  version: 22.5.0
-  resolution: "@types/node@npm:22.5.0"
-  dependencies:
-    undici-types: "npm:~6.19.2"
-  checksum: 10c0/45aa75c5e71645fac42dced4eff7f197c3fdfff6e8a9fdacd0eb2e748ff21ee70ffb73982f068a58e8d73b2c088a63613142c125236cdcf3c072ea97eada1559
   languageName: node
   linkType: hard
 
@@ -7478,7 +7460,7 @@ __metadata:
     "@backstage/config": "npm:^1.2.0"
     "@backstage/errors": "npm:^1.2.4"
     "@types/express": "npm:^5.0.6"
-    "@types/node": "npm:22.5.0"
+    "@types/node": "npm:25.6.0"
     express: "npm:^5.2.1"
     typescript: "npm:6.0.3"
   languageName: unknown
@@ -7521,7 +7503,7 @@ __metadata:
   dependencies:
     "@backstage/cli": "npm:^0.34.6"
     "@backstage/plugin-scaffolder-node": "npm:^0.11.3"
-    "@types/node": "npm:22.5.0"
+    "@types/node": "npm:25.6.0"
     typescript: "npm:6.0.3"
   languageName: unknown
   linkType: soft
@@ -8307,7 +8289,7 @@ __metadata:
     "@backstage/cli": "npm:^0.34.6"
     "@backstage/config": "npm:^1.2.0"
     "@backstage/plugin-app-backend": "npm:^0.5.13"
-    "@types/node": "npm:20.14.15"
+    "@types/node": "npm:25.6.0"
     "@ugurcan-aytar/backstage-plugin-rampart-backend": "workspace:^"
     better-sqlite3: "npm:^12.9.0"
     typescript: "npm:6.0.3"
@@ -21869,13 +21851,6 @@ __metadata:
   version: 5.26.5
   resolution: "undici-types@npm:5.26.5"
   checksum: 10c0/bb673d7876c2d411b6eb6c560e0c571eef4a01c1c19925175d16e3a30c4c428181fb8d7ae802a261f283e4166a0ac435e2f505743aa9e45d893f9a3df017b501
-  languageName: node
-  linkType: hard
-
-"undici-types@npm:~6.19.2":
-  version: 6.19.8
-  resolution: "undici-types@npm:6.19.8"
-  checksum: 10c0/078afa5990fba110f6824823ace86073b4638f1d5112ee26e790155f481f2a868cc3e0615505b6f4282bdf74a3d8caad715fd809e870c2bb0704e3ea6082f344
   languageName: node
   linkType: hard
 
