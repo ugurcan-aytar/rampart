@@ -86,6 +86,19 @@ per PR cycle, which drowns the signal. The advisory mode keeps the
 findings visible in the Actions summary — security review reads them
 and decides if a minor bump is warranted.
 
+**Install-step resilience.** The govulncheck run step carries
+`continue-on-error: true`. The install step
+(`go install golang.org/x/vuln/cmd/govulncheck@<pinned>`) does too,
+and pins to a specific version rather than `@latest`. Rationale:
+upstream tool releases can silently bump Go-version floors — e.g.
+`golang.org/x/vuln` v1.2.0 required Go ≥ 1.25, which hard-failed
+under CI's pinned Go 1.24 + `GOTOOLCHAIN=local`. Pinning + making
+the install step advisory preserves govulncheck's advisory nature
+even when upstream drops break compatibility with our toolchain.
+Currently pinned to `v1.1.4` (last Go 1.22+ compatible release,
+covering engine's 1.24 toolchain). Re-evaluate when the engine Go
+toolchain bumps to 1.25+.
+
 ### Schema drift — `make gen-check`
 
 Contract edits cascade into four generated artefacts: Go server stub,
