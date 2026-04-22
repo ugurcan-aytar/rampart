@@ -4,7 +4,8 @@
     "noEmit": true,
     "rootDir": ".",
     "outDir": "dist",
-    "jsx": "react-jsx"
+    "jsx": "react-jsx",
+    "types": ["jest", "node"]
   },
   "include": ["src/**/*", "dev/**/*", "../../shims.d.ts"],
   "exclude": ["node_modules", "dist", "build"]

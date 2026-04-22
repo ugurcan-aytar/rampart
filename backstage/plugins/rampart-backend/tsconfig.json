@@ -4,7 +4,8 @@
     "noEmit": true,
     "rootDir": ".",
     "lib": ["ES2022"],
-    "jsx": "preserve"
+    "jsx": "preserve",
+    "types": ["jest", "node"]
   },
   "include": ["src/**/*", "../../shims.d.ts"],
   "exclude": ["node_modules", "dist", "build"]
