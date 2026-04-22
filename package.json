@@ -18,5 +18,8 @@
     "backstage/examples/app",
     "backstage/examples/app/packages/*",
     "e2e"
-  ]
+  ],
+  "resolutions": {
+    "koa": "^2.16.4"
+  }
 }
