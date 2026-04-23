@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/api/gen"
+	"github.com/ugurcan-aytar/rampart/engine/internal/api/middleware"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 	"github.com/ugurcan-aytar/rampart/engine/internal/events"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
@@ -46,6 +47,8 @@ type Server struct {
 	heartbeatInterval time.Duration
 	log               *slog.Logger
 	parser            SBOMParser
+
+	auth middleware.AuthOptions
 }
 
 // NewServer wires a Server against the storage + event bus + heartbeat.
@@ -66,24 +69,32 @@ func NewServer(s storage.Storage, bus *events.Bus, heartbeat time.Duration) *Ser
 // at app boot after `npm.EffectiveStrategy` resolves the runtime choice.
 func (s *Server) SetParser(p SBOMParser) { s.parser = p }
 
-// Handler returns the OpenAPI-generated mux wrapped in a permissive CORS
-// middleware. The CORS allowance is intentionally broad — rampart's
-// engine is designed to run behind a backend proxy in production (the
-// Backstage rampart-backend plugin does this) where the proxy owns the
-// CORS policy. In dev, the Backstage plugin dev harness at
-// localhost:3000 hits the engine at localhost:8080 directly, so the
-// engine has to answer the preflight itself or the browser blocks the
-// fetch. Tightening this surface is a deployment-profile concern for
-// Adım 8 (CI) or Adım 9 (ops docs).
+// SetAuth installs the JWT validation options. Defaults to disabled,
+// i.e. the v0.1.x passthrough behaviour; production deployments set
+// RAMPART_AUTH_ENABLED=true + RAMPART_AUTH_SIGNING_KEY to engage it.
+func (s *Server) SetAuth(opts middleware.AuthOptions) {
+	if len(opts.ExemptPaths) == 0 {
+		opts.ExemptPaths = middleware.DefaultExemptPaths
+	}
+	s.auth = opts
+}
+
+// Handler returns the OpenAPI-generated mux wrapped in CORS + auth
+// middleware. Order matters: CORS is outermost so preflight OPTIONS
+// requests never reach the auth layer; auth runs next so SSE / health
+// / `/v1/auth/token` get exempted by prefix before any handler runs.
 func (s *Server) Handler() http.Handler {
-	return corsMiddleware(gen.Handler(s))
+	h := gen.Handler(s)
+	h = middleware.Auth(s.auth)(h)
+	h = corsMiddleware(h)
+	return h
 }
 
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Last-Event-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
 		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

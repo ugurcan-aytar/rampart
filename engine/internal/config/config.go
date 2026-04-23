@@ -4,6 +4,7 @@ package config
 
 import (
 	"os"
+	"strings"
 	"time"
 )
 
@@ -39,6 +40,43 @@ type Config struct {
 	// 256 handles a burst of events from an IoC feed ingest without drops;
 	// memory cost is ~64 KB per idle client.
 	SSESubscriberBuffer int
+
+	// --- Auth (/v1/*) ------------------------------------------------------
+	// JWT validation on mutation routes. Disabled by default so v0.1.x
+	// demos (`make demo-axios`) keep working; flip AuthEnabled=true in
+	// production and supply a signing key via RAMPART_AUTH_SIGNING_KEY.
+
+	// AuthEnabled gates the JWT middleware. false leaves the engine
+	// unauthenticated — suitable for local / demo, never for production.
+	AuthEnabled bool
+
+	// AuthSigningKey is the HS256 shared secret (or RS256 PEM-encoded
+	// public key, depending on AuthAlgorithm). Empty + AuthEnabled=true
+	// is a boot-time error.
+	AuthSigningKey string
+
+	// AuthAlgorithm picks the JWT signing algorithm. `HS256` (the
+	// default) treats AuthSigningKey as a shared secret; `RS256` treats
+	// it as a PEM-encoded RSA public key.
+	AuthAlgorithm string
+
+	// AuthAudience, when non-empty, is asserted against the `aud`
+	// claim. Left empty, the middleware skips the audience check.
+	AuthAudience string
+
+	// --- CORS (/v1/*) ------------------------------------------------------
+
+	// CORSOrigins is the comma-delimited allow-list of origins permitted
+	// to call the engine from a browser. Empty means "no browser
+	// origins" — the demo/backstage flows stay unaffected because they
+	// are server-to-server. Evaluated only when CORSAllowAll=false.
+	CORSOrigins []string
+
+	// CORSAllowAll, when true, echoes the request origin back as the
+	// Access-Control-Allow-Origin header (effectively wildcard). Exists
+	// for the v0.1.x demo path; production deployments should set an
+	// explicit CORSOrigins allow-list instead.
+	CORSAllowAll bool
 }
 
 // Default returns the Phase 1 defaults.
@@ -51,6 +89,9 @@ func Default() *Config {
 		NativeSocketPath:     "/var/run/rampart/native.sock",
 		SSEHeartbeatInterval: 15 * time.Second,
 		SSESubscriberBuffer:  256,
+		AuthEnabled:          false,
+		AuthAlgorithm:        "HS256",
+		CORSAllowAll:         true,
 	}
 }
 
@@ -66,5 +107,38 @@ func FromEnv() *Config {
 	if v := os.Getenv("RAMPART_NATIVE_SOCKET"); v != "" {
 		c.NativeSocketPath = v
 	}
+	if v := os.Getenv("RAMPART_AUTH_ENABLED"); v != "" {
+		c.AuthEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("RAMPART_AUTH_SIGNING_KEY"); v != "" {
+		c.AuthSigningKey = v
+	}
+	if v := os.Getenv("RAMPART_AUTH_ALGORITHM"); v != "" {
+		c.AuthAlgorithm = v
+	}
+	if v := os.Getenv("RAMPART_AUTH_AUDIENCE"); v != "" {
+		c.AuthAudience = v
+	}
+	if v, ok := os.LookupEnv("RAMPART_CORS_ORIGINS"); ok {
+		c.CORSOrigins = splitAndTrim(v)
+		c.CORSAllowAll = false
+	}
+	if v := os.Getenv("RAMPART_CORS_ALLOW_ALL"); v != "" {
+		c.CORSAllowAll = strings.EqualFold(v, "true") || v == "1"
+	}
 	return c
+}
+
+func splitAndTrim(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if t := strings.TrimSpace(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
