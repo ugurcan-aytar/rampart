@@ -98,6 +98,10 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		Audience:    cfg.AuthAudience,
 		ExemptPaths: middleware.DefaultExemptPaths,
 	})
+	corsOpts := middleware.DefaultCORSOptions()
+	corsOpts.AllowAll = cfg.CORSAllowAll
+	corsOpts.Origins = cfg.CORSOrigins
+	apiServer.SetCORS(corsOpts)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
 		Handler:           apiServer.Handler(),

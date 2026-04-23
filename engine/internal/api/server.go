@@ -49,6 +49,7 @@ type Server struct {
 	parser            SBOMParser
 
 	auth middleware.AuthOptions
+	cors middleware.CORSOptions
 }
 
 // NewServer wires a Server against the storage + event bus + heartbeat.
@@ -62,6 +63,7 @@ func NewServer(s storage.Storage, bus *events.Bus, heartbeat time.Duration) *Ser
 		heartbeatInterval: heartbeat,
 		log:               slog.Default(),
 		parser:            npm.NewParser(),
+		cors:              middleware.DefaultCORSOptions(),
 	}
 }
 
@@ -79,6 +81,10 @@ func (s *Server) SetAuth(opts middleware.AuthOptions) {
 	s.auth = opts
 }
 
+// SetCORS installs the CORS options. Defaults to DefaultCORSOptions()
+// (wildcard) — production deployments narrow it with RAMPART_CORS_ORIGINS.
+func (s *Server) SetCORS(opts middleware.CORSOptions) { s.cors = opts }
+
 // Handler returns the OpenAPI-generated mux wrapped in CORS + auth
 // middleware. Order matters: CORS is outermost so preflight OPTIONS
 // requests never reach the auth layer; auth runs next so SSE / health
@@ -86,22 +92,8 @@ func (s *Server) SetAuth(opts middleware.AuthOptions) {
 func (s *Server) Handler() http.Handler {
 	h := gen.Handler(s)
 	h = middleware.Auth(s.auth)(h)
-	h = corsMiddleware(h)
+	h = middleware.CORS(s.cors)(h)
 	return h
-}
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, Last-Event-ID")
-		w.Header().Set("Access-Control-Expose-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // Compile-time interface check — any schema change that adds an operation
