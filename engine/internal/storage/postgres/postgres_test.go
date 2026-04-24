@@ -26,13 +26,13 @@ type sharedContainer struct {
 	counter   int
 }
 
-func startSharedContainer(t *testing.T) *sharedContainer {
-	t.Helper()
+func startSharedContainer(tb testing.TB) *sharedContainer {
+	tb.Helper()
 	if testing.Short() {
-		t.Skip("postgres contract test needs docker — skipping in -short mode")
+		tb.Skip("postgres contract test needs docker — skipping in -short mode")
 	}
 	if os.Getenv("RAMPART_SKIP_POSTGRES_TESTS") != "" {
-		t.Skip("RAMPART_SKIP_POSTGRES_TESTS is set")
+		tb.Skip("RAMPART_SKIP_POSTGRES_TESTS is set")
 	}
 	ctx := context.Background()
 	container, err := tcpostgres.Run(ctx,
@@ -44,7 +44,7 @@ func startSharedContainer(t *testing.T) *sharedContainer {
 		tcpostgres.WithSQLDriver("pgx"),
 	)
 	if err != nil {
-		t.Skipf("postgres container failed to start (docker unavailable?): %v", err)
+		tb.Skipf("postgres container failed to start (docker unavailable?): %v", err)
 	}
 	// BasicWaitStrategies already covers pg_isready; the extra guard
 	// here exists for flaky CI where the container reports ready
@@ -57,25 +57,25 @@ func startSharedContainer(t *testing.T) *sharedContainer {
 
 	adminDSN, err := container.ConnectionString(ctx, "sslmode=disable")
 	if err != nil {
-		t.Fatalf("container DSN: %v", err)
+		tb.Fatalf("container DSN: %v", err)
 	}
 	return &sharedContainer{container: container, adminDSN: adminDSN}
 }
 
-func (c *sharedContainer) stop(t *testing.T) {
-	t.Helper()
+func (c *sharedContainer) stop(tb testing.TB) {
+	tb.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	if err := c.container.Terminate(ctx); err != nil {
-		t.Logf("container terminate: %v", err)
+		tb.Logf("container terminate: %v", err)
 	}
 }
 
 // freshDSN creates a fresh database on the shared container and
 // returns a DSN for it. Using template0 makes database creation
 // ~20 ms rather than the ~1 s it takes to copy template1.
-func (c *sharedContainer) freshDSN(t *testing.T) string {
-	t.Helper()
+func (c *sharedContainer) freshDSN(tb testing.TB) string {
+	tb.Helper()
 	c.counter++
 	dbName := fmt.Sprintf("rampart_contract_%d_%d", os.Getpid(), c.counter)
 
@@ -87,7 +87,7 @@ func (c *sharedContainer) freshDSN(t *testing.T) string {
 		fmt.Sprintf("CREATE DATABASE %s TEMPLATE template0;", dbName),
 	})
 	if err != nil {
-		t.Fatalf("create database %s: %v", dbName, err)
+		tb.Fatalf("create database %s: %v", dbName, err)
 	}
 
 	// Build the per-database DSN by swapping the path of the admin one.
