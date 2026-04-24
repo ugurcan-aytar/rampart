@@ -34,3 +34,36 @@ func TestFromEnv_StrategyOverride(t *testing.T) {
 	require.Equal(t, "native", c.ParserStrategy)
 	require.Equal(t, "/run/rampart/custom.sock", c.NativeSocketPath)
 }
+
+func TestDefault_AuthDisabled(t *testing.T) {
+	c := config.Default()
+	require.False(t, c.AuthEnabled, "auth must be off by default for v0.1.x backward-compat")
+	require.Equal(t, "HS256", c.AuthAlgorithm)
+	require.True(t, c.CORSAllowAll, "CORS wildcard stays on by default until operator narrows it")
+	require.Empty(t, c.CORSOrigins)
+}
+
+func TestFromEnv_AuthOverrides(t *testing.T) {
+	t.Setenv("RAMPART_AUTH_ENABLED", "true")
+	t.Setenv("RAMPART_AUTH_SIGNING_KEY", "s3cr3t")
+	t.Setenv("RAMPART_AUTH_ALGORITHM", "RS256")
+	t.Setenv("RAMPART_AUTH_AUDIENCE", "rampart-prod")
+	c := config.FromEnv()
+	require.True(t, c.AuthEnabled)
+	require.Equal(t, "s3cr3t", c.AuthSigningKey)
+	require.Equal(t, "RS256", c.AuthAlgorithm)
+	require.Equal(t, "rampart-prod", c.AuthAudience)
+}
+
+func TestFromEnv_CORSOriginsOverride(t *testing.T) {
+	t.Setenv("RAMPART_CORS_ORIGINS", "https://app.example.com, https://backstage.example.com")
+	c := config.FromEnv()
+	require.Equal(t, []string{"https://app.example.com", "https://backstage.example.com"}, c.CORSOrigins)
+	require.False(t, c.CORSAllowAll, "explicit origin list must turn off the wildcard")
+}
+
+func TestFromEnv_CORSAllowAll(t *testing.T) {
+	t.Setenv("RAMPART_CORS_ALLOW_ALL", "false")
+	c := config.FromEnv()
+	require.False(t, c.CORSAllowAll)
+}

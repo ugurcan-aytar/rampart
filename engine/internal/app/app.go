@@ -16,6 +16,7 @@ import (
 
 	"github.com/ugurcan-aytar/rampart/engine/ingestion"
 	"github.com/ugurcan-aytar/rampart/engine/internal/api"
+	"github.com/ugurcan-aytar/rampart/engine/internal/api/middleware"
 	"github.com/ugurcan-aytar/rampart/engine/internal/config"
 	"github.com/ugurcan-aytar/rampart/engine/internal/events"
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
@@ -89,9 +90,21 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		"effective", string(effective),
 		"native_socket", cfg.NativeSocketPath)
 
+	apiServer := api.NewServer(store, bus, cfg.SSEHeartbeatInterval)
+	apiServer.SetAuth(middleware.AuthOptions{
+		Enabled:     cfg.AuthEnabled,
+		SigningKey:  cfg.AuthSigningKey,
+		Algorithm:   cfg.AuthAlgorithm,
+		Audience:    cfg.AuthAudience,
+		ExemptPaths: middleware.DefaultExemptPaths,
+	})
+	corsOpts := middleware.DefaultCORSOptions()
+	corsOpts.AllowAll = cfg.CORSAllowAll
+	corsOpts.Origins = cfg.CORSOrigins
+	apiServer.SetCORS(corsOpts)
 	srv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           api.NewServer(store, bus, cfg.SSEHeartbeatInterval).Handler(),
+		Handler:           apiServer.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	return &App{

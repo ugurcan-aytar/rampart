@@ -39,6 +39,13 @@ tags:
     description: Incident lifecycle and remediation.
   - name: stream
     description: Server-sent-events stream of live domain events.
+  - name: auth
+    description: |
+      Authentication token issuance. The engine validates JWTs on every
+      mutation route under `/v1/*` when `RAMPART_AUTH_ENABLED=true`;
+      `/v1/auth/token` mints tokens for internal / test use. Production
+      deployments typically front the engine with an external IdP that
+      issues the JWTs; this endpoint is the self-contained fallback.
 
 paths:
   /healthz:
@@ -65,6 +72,36 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Health' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/auth/token:
+    post:
+      tags: [auth]
+      operationId: IssueAuthToken
+      summary: Mint a short-lived JWT for internal / test use.
+      description: |
+        Intended for testing, local development, and internal tooling
+        that talks to the engine. Production deployments wire an
+        external IdP and only consume this endpoint when the IdP
+        isn't available. The engine validates any caller-supplied
+        JWT against the configured signing key regardless of whether
+        it was issued here.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AuthTokenRequest' }
+      responses:
+        '200':
+          description: A freshly issued access token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthTokenResponse' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '503':
+          description: Token issuance disabled — engine is configured without a signing key.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /v1/components:
     get:
@@ -411,6 +448,43 @@ components:
           type: object
           additionalProperties: true
           description: Optional structured context.
+
+    # -------------------------------- Auth
+
+    AuthTokenRequest:
+      type: object
+      required: [subject]
+      properties:
+        subject:
+          type: string
+          description: Principal the token is issued for (e.g. user id, service name).
+          example: 'svc:catalog-sync'
+        scope:
+          type: string
+          enum: [read, write, admin]
+          default: write
+          description: |
+            Coarse-grained capability tier. `read` permits GET routes, `write`
+            adds mutation routes, `admin` additionally covers any future
+            operator endpoints. Enforcement lives in the auth middleware.
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 86400
+          default: 3600
+          description: Token lifetime. Clamped to [60, 86400].
+
+    AuthTokenResponse:
+      type: object
+      required: [access_token, expires_at]
+      properties:
+        access_token:
+          type: string
+          description: Signed JWT. Present in the `Authorization` header as `Bearer <token>` on subsequent calls.
+        expires_at:
+          type: string
+          format: date-time
+          description: RFC 3339 timestamp at which the token stops validating.
 
     # -------------------------------- Components
 

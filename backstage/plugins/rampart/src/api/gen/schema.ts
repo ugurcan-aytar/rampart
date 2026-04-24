@@ -38,6 +38,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/auth/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Mint a short-lived JWT for internal / test use.
+         * @description Intended for testing, local development, and internal tooling
+         *     that talks to the engine. Production deployments wire an
+         *     external IdP and only consume this endpoint when the IdP
+         *     isn't available. The engine validates any caller-supplied
+         *     JWT against the configured signing key regardless of whether
+         *     it was issued here.
+         */
+        post: operations["IssueAuthToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/components": {
         parameters: {
             query?: never;
@@ -264,6 +289,35 @@ export interface components {
             details?: {
                 [key: string]: unknown;
             };
+        };
+        AuthTokenRequest: {
+            /**
+             * @description Principal the token is issued for (e.g. user id, service name).
+             * @example svc:catalog-sync
+             */
+            subject: string;
+            /**
+             * @description Coarse-grained capability tier. `read` permits GET routes, `write`
+             *     adds mutation routes, `admin` additionally covers any future
+             *     operator endpoints. Enforcement lives in the auth middleware.
+             * @default write
+             * @enum {string}
+             */
+            scope: "read" | "write" | "admin";
+            /**
+             * @description Token lifetime. Clamped to [60, 86400].
+             * @default 3600
+             */
+            ttl_seconds: number;
+        };
+        AuthTokenResponse: {
+            /** @description Signed JWT. Present in the `Authorization` header as `Bearer <token>` on subsequent calls. */
+            access_token: string;
+            /**
+             * Format: date-time
+             * @description RFC 3339 timestamp at which the token stops validating.
+             */
+            expires_at: string;
         };
         Component: {
             /** @example kind:Component/default/web-app */
@@ -624,6 +678,40 @@ export interface operations {
                 };
             };
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    IssueAuthToken: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthTokenRequest"];
+            };
+        };
+        responses: {
+            /** @description A freshly issued access token. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthTokenResponse"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            /** @description Token issuance disabled — engine is configured without a signing key. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     ListComponents: {
