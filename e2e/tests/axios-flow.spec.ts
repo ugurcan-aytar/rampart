@@ -57,11 +57,15 @@ test.describe('axios compromise demo flow', () => {
     ).toBeTruthy();
 
     // The dashboard renders under the header "Supply-chain incidents"
-    // (Adım 5.1 convention); wait for it before asserting row content.
-    // 30 s is the realistic window — the React bundle fetches
-    // /api/config.json + the initial /v1/incidents page before the
-    // table settles.
+    // (Adım 5.1 convention); wait for it so we know the SPA loaded.
     await expect(page.getByText('Supply-chain incidents')).toBeVisible({ timeout: 30_000 });
+
+    // The header renders before the first `/v1/incidents` response
+    // comes back, so asserting on body innerText immediately after is
+    // racy — it used to work by luck. Wait for the populated "2
+    // incident(s)" counter directly so the table has settled before
+    // the IoC + state assertions run.
+    await expect(page.getByText('2 incident(s)')).toBeVisible({ timeout: 30_000 });
 
     // The IncidentDashboard table exposes ID / STATE / OPENED / IOC
     // columns — component names live in the detail view. Asserting on
@@ -69,7 +73,6 @@ test.describe('axios compromise demo flow', () => {
     // live engine data (not empty state).
     const bodyText = await page.locator('body').innerText();
     expect(bodyText.length).toBeGreaterThan(0);
-    expect(bodyText, 'dashboard should show the "2 incident(s)" count').toContain('2 incident(s)');
     expect(bodyText, 'axios IoC id should render in the IOC column').toContain('01IOC-AXIOS-2026-03-31');
     // The two rows carry the "pending" state badge — at least two
     // occurrences when the engine opened the incidents seconds ago.
