@@ -1,4 +1,5 @@
 import { createBackendPlugin, coreServices } from '@backstage/backend-plugin-api';
+import { CatalogClient } from '@backstage/catalog-client';
 
 import { createEngineProxyRouter } from './service/engineProxy';
 import { CatalogSync } from './service/catalogSync';
@@ -61,15 +62,27 @@ export const rampartPlugin = createBackendPlugin({
         logger: coreServices.logger,
         config: coreServices.rootConfig,
         httpRouter: coreServices.httpRouter,
+        auth: coreServices.auth,
+        discovery: coreServices.discovery,
       },
       async init({
         logger,
         config,
         httpRouter,
+        auth,
+        discovery,
       }: {
         logger: PluginLogger;
         config: PluginConfig;
         httpRouter: { use(router: unknown): void };
+        auth: {
+          getOwnServiceCredentials(): Promise<unknown>;
+          getPluginRequestToken(opts: {
+            onBehalfOf: unknown;
+            targetPluginId: string;
+          }): Promise<{ token: string }>;
+        };
+        discovery: { getBaseUrl(pluginId: string): Promise<string> };
       }) {
         const { baseUrl, authToken } = resolveEngineConfig(config, logger);
         const suffix = authToken ? ' (service JWT attached)' : '';
@@ -78,7 +91,30 @@ export const rampartPlugin = createBackendPlugin({
         const router = createEngineProxyRouter({ baseUrl, authToken, logger });
         httpRouter.use(router);
 
-        const sync = new CatalogSync({ logger, config, baseUrl, authToken });
+        // Every catalog call needs a fresh service token —
+        // getPluginRequestToken is designed to be called per request.
+        const catalogFetch: typeof fetch = async (input, init) => {
+          const creds = await auth.getOwnServiceCredentials();
+          const { token } = await auth.getPluginRequestToken({
+            onBehalfOf: creds,
+            targetPluginId: 'catalog',
+          });
+          const headers = new Headers(init?.headers);
+          headers.set('Authorization', `Bearer ${token}`);
+          return fetch(input, { ...init, headers });
+        };
+        const catalog = new CatalogClient({
+          discoveryApi: discovery,
+          fetchApi: { fetch: catalogFetch },
+        });
+
+        const sync = new CatalogSync({
+          logger,
+          config,
+          baseUrl,
+          authToken,
+          catalog,
+        });
         sync.start();
       },
     });
