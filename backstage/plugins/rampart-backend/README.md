@@ -35,14 +35,22 @@ In `app-config.yaml`:
 
 ```yaml
 rampart:
-  baseUrl: http://engine:8080
-  catalogSyncInterval: 30m   # optional; default 24h
+  engine:
+    baseUrl: ${RAMPART_ENGINE_URL:-http://engine:8080}
+    authToken: ${RAMPART_ENGINE_AUTH_TOKEN}   # optional; see below
+  catalogSyncInterval: 30m                     # optional; default 24h
 ```
 
 | Key | Required | Default | Notes |
 |---|---|---|---|
-| `rampart.baseUrl` | yes | — | Origin of the rampart engine. |
-| `rampart.catalogSyncInterval` | no | `24h` | Go duration string. Set to `0s` to disable. |
+| `rampart.engine.baseUrl` | yes | — | Origin of the rampart engine. |
+| `rampart.engine.authToken` | when `RAMPART_AUTH_ENABLED=true` on the engine | — | Static bearer token attached to every upstream call. Mint via `POST /v1/auth/token` or an external IdP. |
+| `rampart.catalogSyncInterval` | no | `24h` | Duration string (`30m`, `1h`, `2d`). Set to `0s` to disable. |
+| `rampart.baseUrl` | deprecated | — | v0.1.x key, still accepted as a fallback; logs a warn on use. Move to `rampart.engine.baseUrl`. |
+
+The proxy prefers an `Authorization` header supplied by the incoming
+request (reserved for the post-A3 OAuth path) and falls back to the
+configured `authToken` when the caller sends none.
 
 ## Routes mounted
 

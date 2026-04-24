@@ -2,7 +2,7 @@ import {
   createPlugin,
   createRouteRef,
   createApiFactory,
-  configApiRef,
+  discoveryApiRef,
   createRoutableExtension,
 } from '@backstage/core-plugin-api';
 
@@ -22,12 +22,11 @@ export const rampartPlugin = createPlugin({
   apis: [
     createApiFactory({
       api: rampartApiRef,
-      deps: { configApi: configApiRef },
-      factory: ({ configApi }: { configApi: { getString(key: string): string } }) => {
-        // `app-config.yaml` must define rampart.baseUrl — e.g. http://localhost:8080.
-        const baseUrl = configApi.getString('rampart.baseUrl');
-        return new RampartClient(baseUrl);
-      },
+      deps: { discoveryApi: discoveryApiRef },
+      // RampartClient resolves `${backend.baseUrl}/api/rampart` via
+      // Backstage's discoveryApi — no direct-to-engine fetches, no
+      // `rampart.baseUrl` config, no browser-side CORS handshake.
+      factory: ({ discoveryApi }) => new RampartClient(discoveryApi),
     }),
   ],
   routes: {

@@ -14,12 +14,19 @@ type Config = { getString(key: string): string; getOptionalString(key: string): 
 export class CatalogSync {
   private readonly logger: Logger;
   private readonly engineBaseUrl: string;
+  private readonly authToken: string | undefined;
   private readonly intervalMs: number;
   private timer: ReturnType<typeof setInterval> | null = null;
 
-  constructor(opts: { logger: Logger; config: Config }) {
+  constructor(opts: {
+    logger: Logger;
+    config: Config;
+    baseUrl: string;
+    authToken?: string;
+  }) {
     this.logger = opts.logger;
-    this.engineBaseUrl = opts.config.getString('rampart.baseUrl');
+    this.engineBaseUrl = opts.baseUrl;
+    this.authToken = opts.authToken;
     const freq = opts.config.getOptionalString('rampart.catalogSyncInterval');
     this.intervalMs = freq ? parseInterval(freq) : 24 * 60 * 60 * 1000;
   }
@@ -43,6 +50,7 @@ export class CatalogSync {
   }
 
   private async runOnce(): Promise<void> {
+    void this.authToken; // referenced once B2 wires the real POST
     this.logger.info('rampart CatalogSync: runOnce — not yet implemented (Adım 7 continuation)');
     // Adım 7:
     //   1. catalog.getEntities({ filter: { kind: 'Component' } })

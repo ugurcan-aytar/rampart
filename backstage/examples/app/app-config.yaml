@@ -29,10 +29,17 @@ auth:
   providers:
     guest: {}
 
-# rampart-specific block — consumed by both plugin-rampart (frontend)
-# and plugin-rampart-backend (server-side proxy + catalog sync).
+# rampart-backend proxy + catalog-sync config. Frontend no longer
+# reads `rampart.baseUrl`; it resolves the proxy path via
+# discoveryApiRef (`${backend.baseUrl}/api/rampart`), so there is
+# nothing under `rampart:` that ships to the browser.
 rampart:
-  baseUrl: http://localhost:8080
+  engine:
+    baseUrl: ${RAMPART_ENGINE_URL:-http://localhost:8080}
+    # authToken is only required when RAMPART_AUTH_ENABLED=true on the
+    # engine side. Issue one via `POST /v1/auth/token` or out-of-band
+    # against a cluster-internal IdP and expose as env.
+    authToken: ${RAMPART_ENGINE_AUTH_TOKEN}
   catalogSyncInterval: 30m
 
 catalog:

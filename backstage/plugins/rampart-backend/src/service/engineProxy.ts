@@ -9,15 +9,26 @@ type Logger = {
 
 /**
  * createEngineProxyRouter returns an Express router mounted at the
- * rampart backend's base path (/api/rampart). Phase 1 is a thin
- * forwarder — it relays method / path / body to the engine and streams
- * the response back. Adım 7 adds auth forwarding, connection pooling,
- * and SSE passthrough for /v1/stream.
+ * rampart backend's base path (/api/rampart). The frontend talks to
+ * this router instead of the engine directly — same-origin against
+ * Backstage, so no browser-side CORS handshake.
+ *
+ * When `authToken` is set (from `rampart.engine.authToken` in
+ * app-config), the proxy attaches `Authorization: Bearer ${token}` on
+ * every upstream request so the engine's A1 JWT middleware accepts
+ * the call. The static-token posture is intentionally simple: an
+ * operator provisions a long-lived service JWT out of band (or
+ * `/v1/auth/token`) and drops it in the env. Token minting inside the
+ * plugin lands alongside Theme A3 (Backstage OAuth wiring).
  *
  * Explicit Express return type keeps TS2742 ("inferred type cannot be
  * named portably") away when another module imports this function.
  */
-export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger }): Express {
+export function createEngineProxyRouter(opts: {
+  baseUrl: string;
+  authToken?: string;
+  logger: Logger;
+}): Express {
   const router = express();
 
   router.get('/_health', (_req: Request, res: Response) => {
@@ -29,7 +40,7 @@ export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger 
     try {
       const upstream = await fetch(target, {
         method: req.method,
-        headers: pickForwardHeaders(req.headers),
+        headers: pickForwardHeaders(req.headers, opts.authToken),
         body: ['GET', 'HEAD'].includes(req.method) ? undefined : JSON.stringify(req.body),
       });
       res.status(upstream.status);
@@ -48,7 +59,10 @@ export function createEngineProxyRouter(opts: { baseUrl: string; logger: Logger 
   return router;
 }
 
-function pickForwardHeaders(headers: IncomingHttpHeaders): Headers {
+function pickForwardHeaders(
+  headers: IncomingHttpHeaders,
+  authToken?: string,
+): Headers {
   // Using Headers (instead of a plain object) sidesteps eslint's
   // dot-notation rule complaining about literal header names like
   // 'Content-Type' and 'Authorization' while keeping the semantics
@@ -59,7 +73,15 @@ function pickForwardHeaders(headers: IncomingHttpHeaders): Headers {
   const out = new Headers();
   const ct = headers['content-type'];
   if (typeof ct === 'string') out.set('Content-Type', ct);
-  const auth = headers.authorization;
-  if (typeof auth === 'string') out.set('Authorization', auth);
+
+  // Incoming Authorization (from a logged-in Backstage user, once A3
+  // ships) wins; otherwise fall back to the operator-configured
+  // service token so A1-enabled engines still accept the call.
+  const incomingAuth = headers.authorization;
+  if (typeof incomingAuth === 'string') {
+    out.set('Authorization', incomingAuth);
+  } else if (authToken) {
+    out.set('Authorization', `Bearer ${authToken}`);
+  }
   return out;
 }

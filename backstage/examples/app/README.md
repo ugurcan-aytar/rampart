@@ -10,7 +10,7 @@ and as the live target for the Playwright e2e suite under `e2e/`.
 
 ```
 backstage/examples/app/
-├── app-config.yaml          # rampart.baseUrl, catalog locations, auth
+├── app-config.yaml          # rampart.engine.*, catalog locations, auth
 ├── packages/app/            # frontend bootstrap + sidebar wiring
 ├── packages/backend/        # backend bootstrap + plugin registration
 ├── Dockerfile               # multi-stage build → ~770 MiB image
@@ -18,8 +18,10 @@ backstage/examples/app/
 ```
 
 `app-config.yaml` is the file most operators edit: it carries
-`rampart.baseUrl` for the frontend `RampartClient` and the
-`rampart.catalogSyncInterval` consumed by the backend plugin.
+`rampart.engine.baseUrl` + `rampart.engine.authToken` for the
+`rampart-backend` proxy and the `rampart.catalogSyncInterval`
+consumed by `CatalogSync`. The frontend needs no rampart-specific
+config — it resolves `/api/rampart` via Backstage's discoveryApi.
 
 ## Run
 
