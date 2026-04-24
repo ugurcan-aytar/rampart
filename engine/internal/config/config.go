@@ -3,6 +3,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -40,6 +41,28 @@ type Config struct {
 	// 256 handles a burst of events from an IoC feed ingest without drops;
 	// memory cost is ~64 KB per idle client.
 	SSESubscriberBuffer int
+
+	// --- Storage -----------------------------------------------------------
+	// v0.2.0 ships Postgres as the production backend. `memory` is
+	// retained for tests and throwaway demos — it loses all state on
+	// restart. Operators switch backends via RAMPART_STORAGE.
+
+	// StorageBackend picks the persistence implementation. `"postgres"`
+	// (the default from v0.2.0) wires the pgx pool + runs goose
+	// migrations at boot; `"memory"` keeps the single-process in-memory
+	// map — suitable for CI + local development.
+	StorageBackend string
+
+	// DBDSN is a libpq-style Postgres connection string. Required when
+	// StorageBackend == "postgres"; ignored for memory.
+	DBDSN string
+
+	// DBMaxConns caps the pgx pool. 0 delegates the default to pgx
+	// (10 at time of writing). Bump this when the engine is sharing
+	// Postgres with a high-concurrency front end (Backstage catalog
+	// sync, publisher-anomaly ingest) and p99 connection-wait time
+	// shows up in traces.
+	DBMaxConns int32
 
 	// --- Auth (/v1/*) ------------------------------------------------------
 	// JWT validation on mutation routes. Disabled by default so v0.1.x
@@ -89,6 +112,8 @@ func Default() *Config {
 		NativeSocketPath:     "/var/run/rampart/native.sock",
 		SSEHeartbeatInterval: 15 * time.Second,
 		SSESubscriberBuffer:  256,
+		StorageBackend:       "postgres",
+		DBMaxConns:           10,
 		AuthEnabled:          false,
 		AuthAlgorithm:        "HS256",
 		CORSAllowAll:         true,
@@ -106,6 +131,18 @@ func FromEnv() *Config {
 	}
 	if v := os.Getenv("RAMPART_NATIVE_SOCKET"); v != "" {
 		c.NativeSocketPath = v
+	}
+	if v := os.Getenv("RAMPART_STORAGE"); v != "" {
+		c.StorageBackend = v
+	}
+	if v := os.Getenv("RAMPART_DB_DSN"); v != "" {
+		c.DBDSN = v
+	}
+	if v := os.Getenv("RAMPART_DB_MAX_CONNS"); v != "" {
+		var n int32
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			c.DBMaxConns = n
+		}
 	}
 	if v := os.Getenv("RAMPART_AUTH_ENABLED"); v != "" {
 		c.AuthEnabled = strings.EqualFold(v, "true") || v == "1"

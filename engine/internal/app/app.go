@@ -22,6 +22,7 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
+	pgstorage "github.com/ugurcan-aytar/rampart/engine/internal/storage/postgres"
 	"github.com/ugurcan-aytar/rampart/engine/internal/trust"
 	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
@@ -79,7 +80,10 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	if log == nil {
 		log = slog.Default()
 	}
-	store := memory.New()
+	store, err := openStorage(ctx, cfg, log)
+	if err != nil {
+		return nil, err
+	}
 	bus := events.NewBus(cfg.SSESubscriberBuffer)
 
 	requested := npm.Strategy(cfg.ParserStrategy)
@@ -116,6 +120,34 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 		server:            srv,
 		effectiveStrategy: effective,
 	}, nil
+}
+
+// openStorage wires the configured storage backend. `memory` is a
+// no-dependency in-process map used by tests and throwaway demos;
+// `postgres` is the production default — it runs goose migrations
+// before returning the pool, so a fresh database works end-to-end
+// after one boot. Missing DSN on `postgres` is a fail-fast error.
+func openStorage(ctx context.Context, cfg *config.Config, log *slog.Logger) (storage.Storage, error) {
+	switch cfg.StorageBackend {
+	case "", "memory":
+		log.Info("storage backend: memory")
+		return memory.New(), nil
+	case "postgres":
+		if cfg.DBDSN == "" {
+			return nil, errors.New("storage=postgres but RAMPART_DB_DSN is empty")
+		}
+		if err := pgstorage.MigrateUp(ctx, cfg.DBDSN); err != nil {
+			return nil, fmt.Errorf("postgres: migrate: %w", err)
+		}
+		s, err := pgstorage.Open(ctx, cfg.DBDSN, cfg.DBMaxConns)
+		if err != nil {
+			return nil, err
+		}
+		log.Info("storage backend: postgres", "max_conns", cfg.DBMaxConns)
+		return s, nil
+	default:
+		return nil, fmt.Errorf("unknown RAMPART_STORAGE=%q (expected memory or postgres)", cfg.StorageBackend)
+	}
 }
 
 // Run starts the HTTP server and blocks until ctx is cancelled.
