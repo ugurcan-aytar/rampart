@@ -13,6 +13,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/ingestion"
@@ -45,19 +46,27 @@ type App struct {
 	trust             trust.Engine
 	events            *events.Bus
 	server            *http.Server
-	listener          net.Listener
 	effectiveStrategy npm.Strategy
+
+	// listener is set by Run after net.Listen succeeds; reads come
+	// from Addr() on a different goroutine in tests that boot the
+	// server in the background and poll for readiness, so it is
+	// guarded by listenerMu.
+	listenerMu sync.RWMutex
+	listener   net.Listener
 }
 
 // Addr reports the host:port the server actually bound to. When the
 // caller configures `:0` (ephemeral), this returns the resolved port
 // — useful to integration tests that need to issue HTTP calls without
-// racing against the OS listen. Valid only after Run has begun; the
-// nil receiver and nil listener both return the configured address.
+// racing against the OS listen. Returns the configured address until
+// Run has bound the listener.
 func (a *App) Addr() string {
 	if a == nil {
 		return ""
 	}
+	a.listenerMu.RLock()
+	defer a.listenerMu.RUnlock()
 	if a.listener != nil {
 		return a.listener.Addr().String()
 	}
@@ -177,7 +186,9 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", a.cfg.HTTPAddr, err)
 	}
+	a.listenerMu.Lock()
 	a.listener = l
+	a.listenerMu.Unlock()
 	a.log.Info("engine starting", "addr", l.Addr().String())
 
 	errCh := make(chan error, 1)
