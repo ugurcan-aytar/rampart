@@ -15,7 +15,7 @@ app:
 backend:
   baseUrl: http://localhost:7007
 
-# Consumed by the RampartClient via configApi.getString('rampart.baseUrl')
-# in plugin.ts; keep this in sync with examples/app/app-config.yaml.
-rampart:
-  baseUrl: http://localhost:8080
+# Frontend reaches the engine through `${backend.baseUrl}/api/rampart`,
+# resolved via discoveryApiRef — no `rampart.baseUrl` on the frontend.
+# The rampart-backend plugin (not loaded in this dev harness) is where
+# `rampart.engine.baseUrl` lives; see examples/app/app-config.yaml.

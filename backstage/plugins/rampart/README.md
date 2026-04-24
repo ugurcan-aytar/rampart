@@ -45,18 +45,15 @@ import ShieldIcon from '@material-ui/icons/Security';
 
 ## Configuration
 
-The plugin reads `rampart.baseUrl` from `app-config.yaml` to locate the
-engine:
+No frontend configuration is required. `RampartClient` resolves the
+engine path through Backstage's `discoveryApiRef`, which expands
+`rampart` to `${backend.baseUrl}/api/rampart` — same-origin against
+Backstage, no browser-side CORS handshake, no `rampart.baseUrl` shipped
+to the bundle.
 
-```yaml
-rampart:
-  baseUrl: http://localhost:8080
-```
-
-In production, point this at the engine through the
-`@ugurcan-aytar/backstage-plugin-rampart-backend` proxy
-(`http://backstage-backend/api/rampart`) so browser DNS and CORS are
-handled by the backend, not the frontend.
+The engine URL lives on the backend side (see the
+`@ugurcan-aytar/backstage-plugin-rampart-backend` README) under
+`rampart.engine.baseUrl`.
 
 ## What ships
 

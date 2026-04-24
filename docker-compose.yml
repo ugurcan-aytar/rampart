@@ -76,15 +76,13 @@ services:
       # of the server (host mapping), not the internal container port.
       APP_CONFIG_app_baseUrl: http://localhost:3000
       APP_CONFIG_backend_baseUrl: http://localhost:3000
-      # Browser-side baseUrl — the rampart frontend's RampartClient
-      # reads this from configApi at runtime and hits it directly.
-      # Must be reachable from the browser (host), not compose-internal
-      # DNS (`engine`). The rampart-backend proxy plugin DOES mount
-      # /api/rampart/v1/* server-side; a Phase 2 refactor of
-      # RampartClient can route through that path and let us use the
-      # compose DNS here. Engine's wildcard CORS middleware covers the
-      # direct-fetch path for now.
-      APP_CONFIG_rampart_baseUrl: http://localhost:8080
+      # Server-side engine URL — the rampart-backend proxy consumes
+      # this via `rampart.engine.baseUrl`, so the value must be the
+      # compose-internal DNS name, not the host port the browser uses.
+      # Theme B1 routed the frontend through this proxy, which is why
+      # `http://engine:8080` replaces the v0.1.x `http://localhost:8080`
+      # that used to be a browser-visible `rampart.baseUrl`.
+      RAMPART_ENGINE_URL: http://engine:8080
       NODE_ENV: production
     depends_on:
       - engine

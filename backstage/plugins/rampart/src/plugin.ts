@@ -2,7 +2,8 @@ import {
   createPlugin,
   createRouteRef,
   createApiFactory,
-  configApiRef,
+  discoveryApiRef,
+  fetchApiRef,
   createRoutableExtension,
 } from '@backstage/core-plugin-api';
 
@@ -22,12 +23,13 @@ export const rampartPlugin = createPlugin({
   apis: [
     createApiFactory({
       api: rampartApiRef,
-      deps: { configApi: configApiRef },
-      factory: ({ configApi }: { configApi: { getString(key: string): string } }) => {
-        // `app-config.yaml` must define rampart.baseUrl — e.g. http://localhost:8080.
-        const baseUrl = configApi.getString('rampart.baseUrl');
-        return new RampartClient(baseUrl);
-      },
+      // discoveryApi resolves `${backend.baseUrl}/api/rampart` so the
+      // frontend never hits the engine directly; fetchApi threads the
+      // current user's Backstage identity token through so Backstage's
+      // httpRouter auth layer accepts the call.
+      deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
+      factory: ({ discoveryApi, fetchApi }) =>
+        new RampartClient(discoveryApi, fetchApi),
     }),
   ],
   routes: {
