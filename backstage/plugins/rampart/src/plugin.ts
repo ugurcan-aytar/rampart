@@ -3,6 +3,7 @@ import {
   createRouteRef,
   createApiFactory,
   discoveryApiRef,
+  fetchApiRef,
   createRoutableExtension,
 } from '@backstage/core-plugin-api';
 
@@ -22,11 +23,13 @@ export const rampartPlugin = createPlugin({
   apis: [
     createApiFactory({
       api: rampartApiRef,
-      deps: { discoveryApi: discoveryApiRef },
-      // RampartClient resolves `${backend.baseUrl}/api/rampart` via
-      // Backstage's discoveryApi — no direct-to-engine fetches, no
-      // `rampart.baseUrl` config, no browser-side CORS handshake.
-      factory: ({ discoveryApi }) => new RampartClient(discoveryApi),
+      // discoveryApi resolves `${backend.baseUrl}/api/rampart` so the
+      // frontend never hits the engine directly; fetchApi threads the
+      // current user's Backstage identity token through so Backstage's
+      // httpRouter auth layer accepts the call.
+      deps: { discoveryApi: discoveryApiRef, fetchApi: fetchApiRef },
+      factory: ({ discoveryApi, fetchApi }) =>
+        new RampartClient(discoveryApi, fetchApi),
     }),
   ],
   routes: {

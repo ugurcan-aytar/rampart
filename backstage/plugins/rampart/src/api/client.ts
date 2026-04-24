@@ -21,21 +21,33 @@ const STREAM_EVENT_TYPES = [
 type DiscoveryApi = { getBaseUrl(pluginId: string): Promise<string> };
 
 /**
+ * FetchApi is the subset of Backstage's `fetchApiRef`. Using it (rather
+ * than the global `fetch`) is what attaches the current user's
+ * Backstage identity token to every call — Backstage's `httpRouter`
+ * rejects unauthenticated requests with 401, so direct `fetch()` calls
+ * would never reach the rampart-backend proxy.
+ */
+type FetchApi = { fetch: typeof fetch };
+
+/**
  * RampartClient speaks the engine's HTTP + SSE contract. The base URL
  * is resolved via Backstage's discoveryApi — `rampart` maps to
  * `${backend.baseUrl}/api/rampart` — so the frontend never hits the
- * engine directly. Every fetch is same-origin against Backstage, which
- * removes the v0.1.x CORS handshake. Engine auth (JWT) is attached by
- * the rampart-backend proxy, not here.
+ * engine directly. Every fetch goes through Backstage's fetchApi so
+ * the Backstage identity travels with the request; the rampart-backend
+ * proxy then attaches the engine service JWT before forwarding.
  */
 export class RampartClient implements RampartApi {
   private stream: EventSource | null = null;
 
-  constructor(private readonly discovery: DiscoveryApi) {}
+  constructor(
+    private readonly discovery: DiscoveryApi,
+    private readonly fetchApi: FetchApi,
+  ) {}
 
   async listIncidents(): Promise<Incident[]> {
     const base = await this.discovery.getBaseUrl('rampart');
-    const res = await fetch(`${base}/v1/incidents`);
+    const res = await this.fetchApi.fetch(`${base}/v1/incidents`);
     if (!res.ok) {
       throw new Error(`rampart: listIncidents ${res.status}`);
     }
@@ -45,7 +57,9 @@ export class RampartClient implements RampartApi {
 
   async getIncident(id: string): Promise<Incident> {
     const base = await this.discovery.getBaseUrl('rampart');
-    const res = await fetch(`${base}/v1/incidents/${encodeURIComponent(id)}`);
+    const res = await this.fetchApi.fetch(
+      `${base}/v1/incidents/${encodeURIComponent(id)}`,
+    );
     if (!res.ok) {
       throw new Error(`rampart: getIncident ${res.status}`);
     }
@@ -55,7 +69,7 @@ export class RampartClient implements RampartApi {
   async listSBOMsForComponent(componentRef: string): Promise<SBOM[]> {
     const base = await this.discovery.getBaseUrl('rampart');
     const path = `${base}/v1/components/${encodeURIComponent(componentRef)}/sboms`;
-    const res = await fetch(path);
+    const res = await this.fetchApi.fetch(path);
     if (!res.ok) {
       throw new Error(`rampart: listSBOMsForComponent ${res.status}`);
     }
@@ -63,15 +77,19 @@ export class RampartClient implements RampartApi {
   }
 
   subscribeToStream(handler: (event: StreamEvent) => void): () => void {
-    // EventSource takes a URL synchronously. Resolve the base URL first,
-    // then wire up the stream. If the unsubscribe is called before the
-    // URL resolves, `cancelled` swallows the late connection.
+    // EventSource takes a URL synchronously and has no way to attach
+    // arbitrary headers (the WHATWG spec only allows `withCredentials`
+    // for cookie-based auth). `withCredentials: true` forwards the
+    // Backstage session cookie so the backend auth middleware accepts
+    // the stream; this works for cookie-session Backstage deployments.
+    // Token-only deployments that want SSE will need an out-of-band
+    // mint mechanism — tracked alongside Theme A3 (Backstage OAuth).
     let cancelled = false;
     this.discovery
       .getBaseUrl('rampart')
       .then(base => {
         if (cancelled) return;
-        this.stream = new EventSource(`${base}/v1/stream`);
+        this.stream = new EventSource(`${base}/v1/stream`, { withCredentials: true });
         STREAM_EVENT_TYPES.forEach(type => {
           this.stream!.addEventListener(type, (e: MessageEvent) => {
             try {
