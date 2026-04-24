@@ -217,14 +217,21 @@ Drift is enforced at CI time by `make gen-check`.
 Rough edges `make demo-axios` deliberately doesn't cover — read
 before deploying rampart for real.
 
-**CORS + base URLs.** The frontend's `RampartClient` reads
-`rampart.baseUrl` and fetches the engine directly. In the demo stack
-this is `http://localhost:8080` (browser-reachable). In production,
-point the frontend at your Backstage backend's proxy
-(`/api/rampart/v1/…`) — the `rampart-backend` plugin already mounts
-it. The engine's current CORS middleware is a wildcard for demo
-convenience; tighten it before exposing the engine to an untrusted
-network.
+**No CORS configuration required when fronted by Backstage.** From
+v0.2.0, the frontend resolves `${backend.baseUrl}/api/rampart` via
+`discoveryApiRef` and goes through the `rampart-backend` proxy —
+same-origin against Backstage, no browser-side CORS handshake, no
+`rampart.baseUrl` on the frontend. The Backstage proxy attaches a
+static service JWT (`rampart.engine.authToken`) so the engine's A1
+middleware accepts upstream calls when `RAMPART_AUTH_ENABLED=true`.
+
+If you deploy the engine standalone (without Backstage in front),
+narrow CORS via `RAMPART_CORS_ORIGINS=https://your-frontend.example`
+and enable auth via `RAMPART_AUTH_ENABLED=true` +
+`RAMPART_AUTH_SIGNING_KEY`. See
+[docs/operations/deployment-patterns.md](docs/operations/deployment-patterns.md)
+for the three supported shapes (Backstage-fronted, standalone,
+reverse-proxied).
 
 **Storage is in-memory.** The engine loses all state on restart.
 Deploy behind a supervisor that can tolerate periodic restarts (k8s,

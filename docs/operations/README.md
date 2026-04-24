@@ -4,8 +4,14 @@ Reserved for operator-facing guides — Compose / Kubernetes
 deployment patterns, reverse-proxy templates, observability
 (metrics, traces, structured logs, SSE health probes).
 
-The directory is intentionally empty at v0.1.0. The authoritative
-operational references for v0.1.0 are:
+## Guides
+
+- [deployment-patterns.md](./deployment-patterns.md) — three
+  supported shapes for putting the engine in front of traffic
+  (Backstage-fronted, standalone, reverse-proxied) with env-var /
+  app-config checklists and nginx/traefik notes.
+
+## Other v0.1.x references
 
 - Root [`README.md`](../../README.md) — the three-segment
   quickstart paths (solo developer, mid-size team, platform team)
@@ -19,5 +25,6 @@ operational references for v0.1.0 are:
   the trust assumptions rampart makes about its surrounding
   infrastructure.
 
-Extended operational documentation is planned for a future
+Extended operational documentation (observability dashboards,
+on-call runbooks, structured-log schema) is planned for a future
 release.
