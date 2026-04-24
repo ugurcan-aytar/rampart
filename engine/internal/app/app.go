@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -44,7 +45,23 @@ type App struct {
 	trust             trust.Engine
 	events            *events.Bus
 	server            *http.Server
+	listener          net.Listener
 	effectiveStrategy npm.Strategy
+}
+
+// Addr reports the host:port the server actually bound to. When the
+// caller configures `:0` (ephemeral), this returns the resolved port
+// — useful to integration tests that need to issue HTTP calls without
+// racing against the OS listen. Valid only after Run has begun; the
+// nil receiver and nil listener both return the configured address.
+func (a *App) Addr() string {
+	if a == nil {
+		return ""
+	}
+	if a.listener != nil {
+		return a.listener.Addr().String()
+	}
+	return a.cfg.HTTPAddr
 }
 
 // Main is the top-level dispatcher: subcommand if args[0] matches one, otherwise
@@ -151,12 +168,21 @@ func openStorage(ctx context.Context, cfg *config.Config, log *slog.Logger) (sto
 }
 
 // Run starts the HTTP server and blocks until ctx is cancelled.
+// Run binds the listener synchronously before returning from the
+// goroutine spawn so callers that inspect Addr immediately after Run
+// see the resolved port — matters when cfg.HTTPAddr asks for an
+// ephemeral port (`:0`) in integration tests.
 func (a *App) Run(ctx context.Context) error {
-	a.log.Info("engine starting", "addr", a.cfg.HTTPAddr)
+	l, err := net.Listen("tcp", a.cfg.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", a.cfg.HTTPAddr, err)
+	}
+	a.listener = l
+	a.log.Info("engine starting", "addr", l.Addr().String())
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := a.server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}
