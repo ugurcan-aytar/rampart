@@ -1,23 +1,48 @@
-import React from 'react';
-import { SignInPage } from '@backstage/core-components';
-import type { SignInPageProps } from '@backstage/core-plugin-api';
+import { useEffect } from 'react';
 
 /**
- * AutoSignInPage — delegates to Backstage's canonical SignInPage with
- * `auto providers={['guest']}`, which runs the `/api/auth/guest/refresh`
- * handshake on mount. That's what produces a fully-formed IdentityApi
- * (with a real `getCredentials()` method) the way Backstage's
- * DefaultFetchApi + the rampart-backend proxy expect.
+ * AutoSignInPage — Guest auto-signin with no interactive UI.
  *
- * The v0.1.x version of this file built a hand-rolled identity stub
- * (userEntityRef + profile only). That worked while RampartClient
- * spoke to the engine directly, but once the frontend started calling
- * `/api/rampart/*` through Backstage's httpRouter (Theme B1), the
- * missing `getCredentials` made every request 401.
+ * Supplies the full IdentityApi surface so Backstage's `DefaultFetchApi`
+ * (and specifically `IdentityAuthInjectorFetchMiddleware`) can call
+ * `getCredentials()` without throwing — the pre-B1 stub only set
+ * `userEntityRef` + `profile`, which was enough while RampartClient
+ * spoke to the engine directly but broke as soon as Theme B1 routed
+ * traffic through Backstage's `fetchApi`.
  *
- * Production deployments that want a real auth provider swap `['guest']`
- * for their IdP (GitHub, OIDC, etc.) — Theme A3.
+ * `getCredentials()` returns `{}` on purpose: there is no Backstage
+ * user token in the guest flow (Backstage's built-in guest auth
+ * backend is not wired — that's Theme A3's scope). The rampart-backend
+ * plugin responds by exempting its routes via
+ * `httpRouter.addAuthPolicy({ allow: 'unauthenticated' })`, so the call
+ * still reaches the proxy. Engine auth (A1) is the real auth boundary
+ * and is configured separately via `rampart.engine.authToken`.
+ *
+ * Production deployments that want a real auth provider replace this
+ * component with Backstage's SignInPage + a configured provider (OIDC,
+ * GitHub, etc.) — Theme A3.
  */
-export const AutoSignInPage = (props: SignInPageProps) => (
-  <SignInPage {...props} auto providers={['guest']} />
-);
+export const AutoSignInPage = ({ onSignInSuccess }: any) => {
+  useEffect(() => {
+    onSignInSuccess({
+      getUserId: () => 'guest',
+      getIdToken: async () => undefined,
+      getProfile: () => ({
+        email: 'guest@example.com',
+        displayName: 'Guest',
+      }),
+      getProfileInfo: async () => ({
+        email: 'guest@example.com',
+        displayName: 'Guest',
+      }),
+      getBackstageIdentity: async () => ({
+        type: 'user',
+        userEntityRef: 'user:default/guest',
+        ownershipEntityRefs: ['user:default/guest'],
+      }),
+      getCredentials: async () => ({}),
+      signOut: async () => {},
+    });
+  }, [onSignInSuccess]);
+  return null;
+};

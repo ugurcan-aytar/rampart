@@ -74,7 +74,10 @@ export const rampartPlugin = createBackendPlugin({
       }: {
         logger: PluginLogger;
         config: PluginConfig;
-        httpRouter: { use(router: unknown): void };
+        httpRouter: {
+          use(router: unknown): void;
+          addAuthPolicy(policy: { path: string; allow: 'unauthenticated' | 'user-cookie' }): void;
+        };
         auth: {
           getOwnServiceCredentials(): Promise<unknown>;
           getPluginRequestToken(opts: {
@@ -90,6 +93,15 @@ export const rampartPlugin = createBackendPlugin({
 
         const router = createEngineProxyRouter({ baseUrl, authToken, logger });
         httpRouter.use(router);
+
+        // The engine's A1 JWT middleware is the real auth boundary (gated
+        // by RAMPART_AUTH_ENABLED). Re-protecting the proxy with Backstage
+        // auth would double-authenticate and break the demo path where
+        // engine auth is off and Backstage runs with the guest identity.
+        // Operators that want user-level auditing enable A3 (OAuth) plus
+        // a narrower policy here.
+        httpRouter.addAuthPolicy({ path: '/v1', allow: 'unauthenticated' });
+        httpRouter.addAuthPolicy({ path: '/_health', allow: 'unauthenticated' });
 
         // Every catalog call needs a fresh service token —
         // getPluginRequestToken is designed to be called per request.
