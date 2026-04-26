@@ -21,6 +21,7 @@ decision has the full picture, not just the resulting code.
 | [0010](./0010-golangci-lint-v2-migration.md) | golangci-lint v2 migration: `.golangci.yml` v1 → v2 format, action v6 → v9 |
 | [0011](./0011-v020-scope-commitment.md) | v0.2.0 scope commitment: six themes ship together (auth, proxy wiring, multi-ecosystem parsers, Postgres, frontend depth, publisher anomaly) |
 | [0012](./0012-auth-boundary-at-engine.md) | Auth boundary at engine, not at Backstage proxy (single enforcement layer; Backstage routes `allow: 'unauthenticated'`) |
+| [0013](./0013-publisher-domain-split.md) | Publisher domain split: per-package time-series (`PublisherSnapshot`) vs per-maintainer aggregate (`PublisherProfile`) live in separate tables |
 
 ADRs 0001–0004 are reserved for decisions that pre-date the formal
 ADR practice; the Phase 1 design is captured in `ARCHITECTURE.md`
