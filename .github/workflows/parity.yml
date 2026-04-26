@@ -1,7 +1,7 @@
 name: parity
 
-# Byte-identical parity between the Go parser (engine/sbom/npm) and
-# the Rust sidecar (native/). Runs the full 7-fixture matrix on every
+# Byte-identical parity between Go parsers (engine/sbom/{npm,gomod,cargo})
+# and the Rust sidecar (native/). Runs the full fixture matrix on every
 # PR that touches either side, so a drift regression on either parser
 # surfaces at review time, not at Adım 9 integration.
 #
@@ -77,8 +77,9 @@ jobs:
       - name: Parity test
         working-directory: engine
         run: |
-          # Parity tests + error tests, verbose for CI log archaeology.
-          go test -run 'TestParserParity(_Errors)?$' -v ./sbom/npm/...
+          # Parity tests + error tests across all ecosystem parsers,
+          # verbose for CI log archaeology.
+          go test -run 'TestParserParity(_Errors)?$' -v ./sbom/...
 
       - name: Upload rampart-native binary on failure
         if: failure()

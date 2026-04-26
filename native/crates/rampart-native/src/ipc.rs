@@ -7,7 +7,7 @@
 //!   - One task per accepted connection.
 //!   - Framing: 4-byte BE outer length + binary body, body opens with a
 //!     1-byte opcode. See `protocol.rs`.
-//!   - Two request kinds: `parse_npm_lockfile`, `ping`.
+//!   - Request kinds: `parse_npm_lockfile`, `parse_gomod_lockfile`, `ping`.
 //!
 //! Platform scope: Unix only (`tokio::net::UnixListener` requires `cfg(unix)`
 //! per https://docs.rs/tokio/latest/tokio/net/struct.UnixListener.html).
@@ -21,7 +21,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use crate::parser::{parse, ParseError};
+use crate::parsers::{gomod, npm, ParseError, ParsedSbom};
 use crate::protocol::{
     decode_request_body, encode_error, encode_parse_result, encode_pong, Request, MAX_FRAME_BYTES,
 };
@@ -183,23 +183,30 @@ fn handle_body(body: &[u8]) -> Vec<u8> {
     };
     match req {
         Request::Ping => encode_pong(),
-        Request::Parse {
+        Request::ParseNpm {
             content,
             reserved_metadata: _,
-        } => handle_parse(&content),
+        } => dispatch_parse("npm", npm::parse(&content), content.len()),
+        Request::ParseGomod { gosum, gomod } => {
+            dispatch_parse("gomod", gomod::parse(&gosum, &gomod), gosum.len() + gomod.len())
+        }
     }
 }
 
-fn handle_parse(content: &[u8]) -> Vec<u8> {
+fn dispatch_parse(
+    eco: &'static str,
+    result: Result<ParsedSbom, ParseError>,
+    bytes_read: usize,
+) -> Vec<u8> {
     let start = Instant::now();
-    match parse(content) {
+    match result {
         Ok(parsed_sbom) => {
-            let elapsed = start.elapsed();
             debug!(
-                parse_ms = elapsed.as_millis() as u64,
+                ecosystem = eco,
+                parse_ms = start.elapsed().as_millis() as u64,
                 package_count = parsed_sbom.packages.len(),
-                bytes_read = content.len(),
-                "parse_npm_lockfile ok"
+                bytes_read,
+                "parse ok"
             );
             let json = match serde_json::to_vec(&parsed_sbom) {
                 Ok(b) => b,
@@ -213,7 +220,7 @@ fn handle_parse(content: &[u8]) -> Vec<u8> {
             let code = match &e {
                 ParseError::Malformed(_) => "MALFORMED_LOCKFILE",
                 ParseError::UnsupportedVersion(_) => "UNSUPPORTED_LOCKFILE_VERSION",
-                ParseError::Empty => "EMPTY_LOCKFILE",
+                ParseError::Empty(_) => "EMPTY_LOCKFILE",
             };
             encode_error(code, &e.to_string())
         }
@@ -223,7 +230,10 @@ fn handle_parse(content: &[u8]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{MSG_ERROR, MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING, MSG_PONG};
+    use crate::protocol::{
+        MSG_ERROR, MSG_PARSE_GOMOD_REQUEST, MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING,
+        MSG_PONG,
+    };
 
     fn build_parse_request_body(content: &[u8]) -> Vec<u8> {
         let mut body = Vec::new();
@@ -287,4 +297,24 @@ mod tests {
         let resp = handle_body(&[]);
         assert_eq!(resp[4], MSG_ERROR);
     }
+
+    #[test]
+    fn handle_parse_gomod_returns_result() {
+        let gosum = b"github.com/x/y v1.0.0 h1:hh=\n";
+        let gomod = b"module example.com/x\n";
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_GOMOD_REQUEST);
+        body.extend_from_slice(&(gosum.len() as u32).to_be_bytes());
+        body.extend_from_slice(gosum);
+        body.extend_from_slice(&(gomod.len() as u32).to_be_bytes());
+        body.extend_from_slice(gomod);
+        let resp = handle_body(&body);
+        assert_eq!(resp[4], MSG_PARSE_RESULT);
+        let sbom_len = u32::from_be_bytes([resp[5], resp[6], resp[7], resp[8]]) as usize;
+        let json = &resp[9..9 + sbom_len];
+        let v: serde_json::Value = serde_json::from_slice(json).unwrap();
+        assert_eq!(v["Ecosystem"], "gomod");
+        assert_eq!(v["Packages"].as_array().unwrap().len(), 1);
+    }
+
 }
