@@ -1,16 +1,17 @@
-//! rampart-native — npm lockfile parser and UDS IPC server.
+//! rampart-native — multi-ecosystem lockfile parser and UDS IPC server.
 //!
-//! The public surface of this crate is intentionally tiny: the server loop
-//! in [`ipc::serve`] plus the parser entry point in [`parser::parse`].
-//! `rampart-native-cli` turns the crate into a binary that listens on a
-//! Unix Domain Socket and answers length-prefixed JSON requests.
+//! Public surface: ecosystem parsers in [`parsers`] (npm, gomod, cargo)
+//! and the binary IPC server in [`ipc::serve`]. The `rampart-native-cli`
+//! binary listens on a Unix Domain Socket and answers length-prefixed
+//! binary requests.
 
 pub mod ipc;
-pub mod parser;
+pub mod parsers;
 pub mod protocol;
 
-pub use parser::{parse, PackageVersion, ParseError, ParsedSbom};
+pub use parsers::{cargo, gomod, npm, PackageVersion, ParseError, ParsedSbom};
 pub use protocol::{
     decode_request_body, encode_error, encode_parse_result, encode_pong, DecodeError, Request,
-    MAX_FRAME_BYTES, MSG_ERROR, MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING, MSG_PONG,
+    MAX_FRAME_BYTES, MSG_ERROR, MSG_PARSE_CARGO_REQUEST, MSG_PARSE_GOMOD_REQUEST,
+    MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING, MSG_PONG,
 };

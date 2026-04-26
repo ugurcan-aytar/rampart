@@ -18,10 +18,17 @@ type PackageVersion struct {
 
 // CanonicalPURL returns a purl (package URL) for ecosystem/name/version.
 // Scoped npm names have their leading '@' URL-encoded per the purl spec.
+//
+// Internal ecosystem names map to purl-spec types where they differ:
+//   - "gomod" → "pkg:golang/..." (purl spec uses "golang", not "gomod")
+//   - "cargo" → "pkg:cargo/..." (1:1)
+//   - "npm"   → "pkg:npm/..."  (with @scope encoding)
 func CanonicalPURL(ecosystem, name, version string) string {
 	switch ecosystem {
 	case "npm":
 		return npmPURL(name, version)
+	case "gomod":
+		return fmt.Sprintf("pkg:golang/%s@%s", name, version)
 	default:
 		return fmt.Sprintf("pkg:%s/%s@%s", ecosystem, name, version)
 	}

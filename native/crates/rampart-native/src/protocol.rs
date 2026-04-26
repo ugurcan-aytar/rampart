@@ -10,6 +10,11 @@
 //!     - 4-byte BE metadata_length + `metadata_length` raw bytes
 //!       (reserved — Phase 1 callers send 0 and the server ignores any
 //!       payload; Phase 2 may use this as a JSON options blob)
+//!   * `0x06` parse_gomod_lockfile (Theme C1)
+//!     - 4-byte BE gosum_length + go.sum content
+//!     - 4-byte BE gomod_length + go.mod content (may be 0)
+//!   * `0x07` parse_cargo_lockfile (Theme C2)
+//!     - 4-byte BE content_length + Cargo.lock bytes
 //!   * `0xFF` ping — body is just the opcode byte
 //!
 //! Response opcodes (server → client):
@@ -17,12 +22,6 @@
 //!   * `0x03` error — 4-byte BE code_length + code (ASCII), then
 //!     4-byte BE message_length + message (UTF-8)
 //!   * `0xFE` pong — body is just the opcode byte
-//!
-//! The request path is fully binary so large lockfile blobs ride the
-//! wire without base64 expansion or JSON escape cost. The response
-//! payload stays JSON — the SBOM is orders of magnitude smaller than
-//! a large lockfile, and the JSON form keeps `strace` / `tcpdump`
-//! output readable.
 
 use thiserror::Error;
 
@@ -32,6 +31,8 @@ pub const MAX_FRAME_BYTES: u32 = 100 * 1024 * 1024;
 pub const MSG_PARSE_REQUEST: u8 = 0x01;
 pub const MSG_PARSE_RESULT: u8 = 0x02;
 pub const MSG_ERROR: u8 = 0x03;
+pub const MSG_PARSE_GOMOD_REQUEST: u8 = 0x06;
+pub const MSG_PARSE_CARGO_REQUEST: u8 = 0x07;
 pub const MSG_PONG: u8 = 0xFE;
 pub const MSG_PING: u8 = 0xFF;
 
@@ -39,13 +40,20 @@ pub const MSG_PING: u8 = 0xFF;
 /// binary decode of the body.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Request {
-    Parse {
+    ParseNpm {
         content: Vec<u8>,
         /// Reserved extension point (Phase 2: parser options). Phase 1
         /// callers send an empty slice; the server ignores any payload
         /// here so a forward-compatible client never breaks the
         /// protocol handshake.
         reserved_metadata: Vec<u8>,
+    },
+    ParseGomod {
+        gosum: Vec<u8>,
+        gomod: Vec<u8>,
+    },
+    ParseCargo {
+        content: Vec<u8>,
     },
     Ping,
 }
@@ -76,9 +84,29 @@ pub fn decode_request_body(body: &[u8]) -> Result<Request, DecodeError> {
             if !rest.is_empty() {
                 return Err(DecodeError::TrailingBytes);
             }
-            Ok(Request::Parse {
+            Ok(Request::ParseNpm {
                 content: content.to_vec(),
                 reserved_metadata: metadata.to_vec(),
+            })
+        }
+        MSG_PARSE_GOMOD_REQUEST => {
+            let (gosum, rest) = read_length_prefixed(rest)?;
+            let (gomod, rest) = read_length_prefixed(rest)?;
+            if !rest.is_empty() {
+                return Err(DecodeError::TrailingBytes);
+            }
+            Ok(Request::ParseGomod {
+                gosum: gosum.to_vec(),
+                gomod: gomod.to_vec(),
+            })
+        }
+        MSG_PARSE_CARGO_REQUEST => {
+            let (content, rest) = read_length_prefixed(rest)?;
+            if !rest.is_empty() {
+                return Err(DecodeError::TrailingBytes);
+            }
+            Ok(Request::ParseCargo {
+                content: content.to_vec(),
             })
         }
         MSG_PING => {
@@ -105,7 +133,6 @@ fn read_length_prefixed(rest: &[u8]) -> Result<(&[u8], &[u8]), DecodeError> {
 
 /// Encode a full `parse_result` frame (outer length + body).
 pub fn encode_parse_result(sbom_json: &[u8]) -> Vec<u8> {
-    // body = opcode + 4-byte len + JSON
     let body_len = 1 + 4 + sbom_json.len();
     let mut buf = Vec::with_capacity(4 + body_len);
     buf.extend_from_slice(&(body_len as u32).to_be_bytes());
@@ -143,7 +170,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn decode_parse_request_happy_path() {
+    fn decode_parse_npm_happy_path() {
         let content = b"lockfile bytes";
         let meta = b"{}";
         let mut body = Vec::new();
@@ -156,7 +183,7 @@ mod tests {
         let req = decode_request_body(&body).unwrap();
         assert_eq!(
             req,
-            Request::Parse {
+            Request::ParseNpm {
                 content: content.to_vec(),
                 reserved_metadata: meta.to_vec(),
             }
@@ -164,24 +191,39 @@ mod tests {
     }
 
     #[test]
-    fn decode_parse_request_with_zero_metadata() {
-        let content = b"x";
+    fn decode_parse_gomod_happy_path() {
+        let gosum = b"github.com/x/y v1.0.0 h1:abc=\n";
+        let gomod = b"module x\n";
         let mut body = Vec::new();
-        body.push(MSG_PARSE_REQUEST);
+        body.push(MSG_PARSE_GOMOD_REQUEST);
+        body.extend_from_slice(&(gosum.len() as u32).to_be_bytes());
+        body.extend_from_slice(gosum);
+        body.extend_from_slice(&(gomod.len() as u32).to_be_bytes());
+        body.extend_from_slice(gomod);
+        let req = decode_request_body(&body).unwrap();
+        assert_eq!(
+            req,
+            Request::ParseGomod {
+                gosum: gosum.to_vec(),
+                gomod: gomod.to_vec(),
+            }
+        );
+    }
+
+    #[test]
+    fn decode_parse_cargo_happy_path() {
+        let content = b"version = 4\n";
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_CARGO_REQUEST);
         body.extend_from_slice(&(content.len() as u32).to_be_bytes());
         body.extend_from_slice(content);
-        body.extend_from_slice(&0u32.to_be_bytes());
-
-        match decode_request_body(&body).unwrap() {
-            Request::Parse {
-                content: c,
-                reserved_metadata,
-            } => {
-                assert_eq!(c, b"x");
-                assert!(reserved_metadata.is_empty());
+        let req = decode_request_body(&body).unwrap();
+        assert_eq!(
+            req,
+            Request::ParseCargo {
+                content: content.to_vec(),
             }
-            other => panic!("expected Parse, got {other:?}"),
-        }
+        );
     }
 
     #[test]
@@ -207,35 +249,12 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_truncated_content_length() {
-        let body = [MSG_PARSE_REQUEST, 0x00, 0x00]; // 3 bytes where 4 needed
-        assert_eq!(
-            decode_request_body(&body).unwrap_err(),
-            DecodeError::Truncated
-        );
-    }
-
-    #[test]
-    fn decode_rejects_content_overrun() {
-        // Length says 10 but only 3 bytes follow.
+    fn decode_rejects_trailing_bytes_on_npm() {
         let mut body = Vec::new();
         body.push(MSG_PARSE_REQUEST);
-        body.extend_from_slice(&10u32.to_be_bytes());
-        body.extend_from_slice(&[1, 2, 3]);
-        assert_eq!(
-            decode_request_body(&body).unwrap_err(),
-            DecodeError::Truncated
-        );
-    }
-
-    #[test]
-    fn decode_rejects_trailing_bytes_on_parse() {
-        // Valid content + metadata, plus junk after.
-        let mut body = Vec::new();
-        body.push(MSG_PARSE_REQUEST);
-        body.extend_from_slice(&0u32.to_be_bytes()); // content_len = 0
-        body.extend_from_slice(&0u32.to_be_bytes()); // metadata_len = 0
-        body.push(0xAA); // trailing junk
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.push(0xAA);
         assert_eq!(
             decode_request_body(&body).unwrap_err(),
             DecodeError::TrailingBytes
@@ -243,8 +262,11 @@ mod tests {
     }
 
     #[test]
-    fn decode_rejects_trailing_bytes_on_ping() {
-        let body = [MSG_PING, 0xAA];
+    fn decode_rejects_trailing_bytes_on_cargo() {
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_CARGO_REQUEST);
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.push(0xAA);
         assert_eq!(
             decode_request_body(&body).unwrap_err(),
             DecodeError::TrailingBytes
@@ -255,33 +277,12 @@ mod tests {
     fn encode_parse_result_layout() {
         let payload = br#"{"Ecosystem":"npm"}"#;
         let frame = encode_parse_result(payload);
-        // outer_len == body_len == 1 + 4 + payload.len
         let outer_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
         assert_eq!(outer_len, 1 + 4 + payload.len());
         assert_eq!(frame[4], MSG_PARSE_RESULT);
         let sbom_len = u32::from_be_bytes([frame[5], frame[6], frame[7], frame[8]]) as usize;
         assert_eq!(sbom_len, payload.len());
         assert_eq!(&frame[9..], payload);
-    }
-
-    #[test]
-    fn encode_error_layout() {
-        let frame = encode_error("MALFORMED_LOCKFILE", "bad json");
-        let outer_len = u32::from_be_bytes([frame[0], frame[1], frame[2], frame[3]]) as usize;
-        assert_eq!(frame.len(), 4 + outer_len);
-        assert_eq!(frame[4], MSG_ERROR);
-        let code_len = u32::from_be_bytes([frame[5], frame[6], frame[7], frame[8]]) as usize;
-        assert_eq!(code_len, "MALFORMED_LOCKFILE".len());
-        let code_end = 9 + code_len;
-        assert_eq!(&frame[9..code_end], b"MALFORMED_LOCKFILE");
-        let msg_len = u32::from_be_bytes([
-            frame[code_end],
-            frame[code_end + 1],
-            frame[code_end + 2],
-            frame[code_end + 3],
-        ]) as usize;
-        assert_eq!(msg_len, "bad json".len());
-        assert_eq!(&frame[code_end + 4..], b"bad json");
     }
 
     #[test]

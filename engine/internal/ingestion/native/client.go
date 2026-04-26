@@ -33,11 +33,13 @@ const MaxFrameBytes = 100 * 1024 * 1024
 
 // Wire opcodes — kept in lock-step with native/crates/rampart-native/src/protocol.rs.
 const (
-	msgParseRequest byte = 0x01
-	msgParseResult  byte = 0x02
-	msgError        byte = 0x03
-	msgPong         byte = 0xFE
-	msgPing         byte = 0xFF
+	msgParseRequest      byte = 0x01
+	msgParseResult       byte = 0x02
+	msgError             byte = 0x03
+	msgParseGomodRequest byte = 0x06
+	msgParseCargoRequest byte = 0x07
+	msgPong              byte = 0xFE
+	msgPing              byte = 0xFF
 )
 
 // Sentinel errors. `errors.Is` works across the Go parser (engine/sbom/npm)
@@ -127,6 +129,59 @@ func (c *Client) ParseNPMLockfile(ctx context.Context, content []byte) (*domain.
 	opcode := respBody[0]
 	rest := respBody[1:]
 
+	switch opcode {
+	case msgParseResult:
+		return decodeParseResult(rest)
+	case msgError:
+		return nil, decodeErrorFrame(rest)
+	default:
+		return nil, fmt.Errorf("%w: unexpected opcode 0x%X", ErrMalformedResponse, opcode)
+	}
+}
+
+// ParseGoModule asks the Rust parser to parse a Go modules lockfile
+// (go.sum + go.mod). gomodContent may be nil/empty.
+func (c *Client) ParseGoModule(ctx context.Context, gosumContent, gomodContent []byte) (*domain.ParsedSBOM, error) {
+	// Body: opcode + gosum_len(4) + gosum + gomod_len(4) + gomod
+	bodyLen := 1 + 4 + len(gosumContent) + 4 + len(gomodContent)
+	if bodyLen > MaxFrameBytes {
+		return nil, fmt.Errorf("request body %d exceeds MaxFrameBytes %d", bodyLen, MaxFrameBytes)
+	}
+	frame := make([]byte, 0, 4+bodyLen)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(bodyLen)) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, msgParseGomodRequest)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(gosumContent))) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, gosumContent...)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(gomodContent))) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, gomodContent...)
+	return c.parseDispatch(ctx, frame)
+}
+
+// ParseCargo asks the Rust parser to parse a Cargo.lock body.
+func (c *Client) ParseCargo(ctx context.Context, content []byte) (*domain.ParsedSBOM, error) {
+	bodyLen := 1 + 4 + len(content)
+	if bodyLen > MaxFrameBytes {
+		return nil, fmt.Errorf("request body %d exceeds MaxFrameBytes %d", bodyLen, MaxFrameBytes)
+	}
+	frame := make([]byte, 0, 4+bodyLen)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(bodyLen)) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, msgParseCargoRequest)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(content))) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, content...)
+	return c.parseDispatch(ctx, frame)
+}
+
+// parseDispatch is the post-roundTrip half shared by all parse opcodes.
+func (c *Client) parseDispatch(ctx context.Context, frame []byte) (*domain.ParsedSBOM, error) {
+	respBody, err := c.roundTrip(ctx, frame)
+	if err != nil {
+		return nil, err
+	}
+	if len(respBody) < 1 {
+		return nil, fmt.Errorf("%w: empty response body", ErrMalformedResponse)
+	}
+	opcode := respBody[0]
+	rest := respBody[1:]
 	switch opcode {
 	case msgParseResult:
 		return decodeParseResult(rest)
