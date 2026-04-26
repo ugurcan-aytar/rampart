@@ -59,7 +59,7 @@ func TestSubmitIoC_ForwardMatch_OpensIncidentPerComponent(t *testing.T) {
 	_ = postIoC(t, h, gen.IoC{
 		Id:          "01IOC-AXIOS-1-11-0",
 		Kind:        gen.IoCKindPackageVersion,
-		Severity:    gen.Critical,
+		Severity:    gen.SeverityCritical,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		PackageVersion: &gen.IoCPackageVersion{
@@ -112,7 +112,7 @@ func TestSubmitIoC_Idempotent(t *testing.T) {
 	body := gen.IoC{
 		Id:          "01IOC-DUP",
 		Kind:        gen.IoCKindPackageVersion,
-		Severity:    gen.Critical,
+		Severity:    gen.SeverityCritical,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		PackageVersion: &gen.IoCPackageVersion{
@@ -132,7 +132,7 @@ func TestSubmitIoC_InvalidKind_400(t *testing.T) {
 	body := gen.IoC{
 		Id:          "01IOC-BAD",
 		Kind:        gen.IoCKindPackageVersion,
-		Severity:    gen.High,
+		Severity:    gen.SeverityHigh,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		// no body set → Validate() fails
@@ -153,7 +153,7 @@ func TestSubmitIoC_InvalidSemverConstraint_400(t *testing.T) {
 	body := gen.IoC{
 		Id:          "01IOC-BADRANGE",
 		Kind:        gen.IoCKindPackageRange,
-		Severity:    gen.High,
+		Severity:    gen.SeverityHigh,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		PackageRange: &gen.IoCPackageRange{
@@ -177,7 +177,7 @@ func TestListIoCs_ReturnsStored(t *testing.T) {
 	_ = postIoC(t, h, gen.IoC{
 		Id:          "01IOC-A",
 		Kind:        gen.IoCKindPackageVersion,
-		Severity:    gen.Critical,
+		Severity:    gen.SeverityCritical,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		PackageVersion: &gen.IoCPackageVersion{

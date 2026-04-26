@@ -267,6 +267,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/anomalies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List detector hits, optionally filtered by package / kind / time. */
+        get: operations["ListAnomalies"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/anomalies/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        /** Fetch a single anomaly by id. */
+        get: operations["GetAnomaly"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/stream": {
         parameters: {
             query?: never;
@@ -528,6 +564,33 @@ export interface components {
         };
         PublisherHistory: {
             items: components["schemas"]["PublisherSnapshot"][];
+        };
+        /**
+         * @description Theme F2 anomaly catalog. String values mirror the matching
+         *     `SignalType` constants — `AnomalyKind` is the F2 subset that
+         *     ships with concrete detectors.
+         * @enum {string}
+         */
+        AnomalyKind: "new_maintainer_email" | "oidc_regression" | "version_jump";
+        /** @enum {string} */
+        Confidence: "low" | "medium" | "high";
+        Anomaly: {
+            /** Format: int64 */
+            id: number;
+            kind: components["schemas"]["AnomalyKind"];
+            /** @example npm:axios */
+            packageRef: string;
+            /** Format: date-time */
+            detectedAt: string;
+            confidence: components["schemas"]["Confidence"];
+            explanation: string;
+            /** @description Detector-specific structured evidence. */
+            evidence?: {
+                [key: string]: unknown;
+            };
+        };
+        AnomalyPage: {
+            items: components["schemas"]["Anomaly"][];
         };
         PublisherSignal: {
             /**
@@ -1148,6 +1211,57 @@ export interface operations {
                 };
             };
             400: components["responses"]["BadRequest"];
+        };
+    };
+    ListAnomalies: {
+        parameters: {
+            query?: {
+                /** @description Filter to a single package_ref (e.g. `npm:axios`). */
+                package_ref?: string;
+                kind?: components["schemas"]["AnomalyKind"];
+                from?: string;
+                to?: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Newest-first list of anomalies. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AnomalyPage"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+        };
+    };
+    GetAnomaly: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Anomaly. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Anomaly"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     Stream: {
