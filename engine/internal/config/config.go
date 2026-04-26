@@ -100,23 +100,53 @@ type Config struct {
 	// for the v0.1.x demo path; production deployments should set an
 	// explicit CORSOrigins allow-list instead.
 	CORSAllowAll bool
+
+	// --- Publisher refresh scheduler (Theme F1) ----------------------------
+	// OFF by default: the scheduler hits external APIs (npm registry,
+	// GitHub) and a default-on demo would surprise operators with
+	// outbound network calls. Flip via RAMPART_PUBLISHER_ENABLED=true.
+
+	// PublisherEnabled gates the scheduler. false = no scheduler, no
+	// publisher_history rows produced. The GET /v1/publisher/.../history
+	// endpoint stays available (it just returns empty) so consumers
+	// don't have to feature-detect.
+	PublisherEnabled bool
+
+	// PublisherRefreshInterval is how often the scheduler ticks. Each
+	// tick re-ingests packages whose latest snapshot is older than the
+	// interval. 1h balances freshness vs. upstream load.
+	PublisherRefreshInterval time.Duration
+
+	// PublisherBatchSize caps the number of packages refreshed per
+	// tick. Single-tick burst is bounded by ingestor-side rate limits
+	// regardless; this cap keeps a tick from running for hours when
+	// the universe is huge.
+	PublisherBatchSize int
+
+	// GithubToken, when non-empty, is sent as Authorization: Bearer to
+	// api.github.com — bumps the GitHub rate limit from 60/hr (unauth)
+	// to 5000/hr. Only consulted when PublisherEnabled=true.
+	GithubToken string
 }
 
 // Default returns the Phase 1 defaults.
 func Default() *Config {
 	return &Config{
-		HTTPAddr:             ":8080",
-		LogLevel:             "info",
-		TrustEngine:          "always_trust",
-		ParserStrategy:       "go",
-		NativeSocketPath:     "/var/run/rampart/native.sock",
-		SSEHeartbeatInterval: 15 * time.Second,
-		SSESubscriberBuffer:  256,
-		StorageBackend:       "postgres",
-		DBMaxConns:           10,
-		AuthEnabled:          false,
-		AuthAlgorithm:        "HS256",
-		CORSAllowAll:         true,
+		HTTPAddr:                 ":8080",
+		LogLevel:                 "info",
+		TrustEngine:              "always_trust",
+		ParserStrategy:           "go",
+		NativeSocketPath:         "/var/run/rampart/native.sock",
+		SSEHeartbeatInterval:     15 * time.Second,
+		SSESubscriberBuffer:      256,
+		StorageBackend:           "postgres",
+		DBMaxConns:               10,
+		AuthEnabled:              false,
+		AuthAlgorithm:            "HS256",
+		CORSAllowAll:             true,
+		PublisherEnabled:         false,
+		PublisherRefreshInterval: time.Hour,
+		PublisherBatchSize:       50,
 	}
 }
 
@@ -162,6 +192,23 @@ func FromEnv() *Config {
 	}
 	if v := os.Getenv("RAMPART_CORS_ALLOW_ALL"); v != "" {
 		c.CORSAllowAll = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("RAMPART_PUBLISHER_ENABLED"); v != "" {
+		c.PublisherEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("RAMPART_PUBLISHER_REFRESH_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.PublisherRefreshInterval = d
+		}
+	}
+	if v := os.Getenv("RAMPART_PUBLISHER_BATCH_SIZE"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			c.PublisherBatchSize = n
+		}
+	}
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		c.GithubToken = v
 	}
 	return c
 }
