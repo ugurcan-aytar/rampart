@@ -22,6 +22,8 @@ v0.2.0 ships six coherent themes simultaneously:
 - **Theme A — Production-grade security posture.** JWT auth on `/v1/*`, env-configured CORS allow-list, Backstage guest auth replaced with real OAuth provider.
 - **Theme B — Backstage architecture completion.** Frontend client routes through backend proxy (relative URLs), CatalogSync real push, "no CORS needed" install story.
 - **Theme C — Multi-ecosystem parser expansion.** Go modules, Cargo, PyPI, Maven. Rust sidecar parity for Go and Cargo (TOML + Go modules already fit native). PyPI and Maven single-engine (Wasm parity moves to v0.5.0).
+
+  **Implementation note (PR #37, 2026-04-26)**: Theme C ships without `IoCKindGoModule` / `IoCKindCargo` enum constants originally listed in this ADR. Rationale: rampart's existing type system separates *behavioural* IoC kinds (PackageVersion / Range / Anomaly) from the *ecosystem* dimension (a separate `Ecosystem` field on the IoC). The matcher already dispatches on ecosystem; adding ecosystem-named IoC kinds would duplicate the dimension. The ADR's enum proposal reflected an earlier draft of the type system; PR #37 preserves the cleaner factoring instead of mechanically applying the spec.
 - **Theme D — Postgres storage backend.** In-memory store becomes a dev-only mode; production deployments get persistent storage with migration tooling (goose).
 - **Theme E — Frontend depth.** IncidentDashboard gets detail drawer (timeline + IoC + affected components + remediation log), blast-radius graph visualisation (@react-flow), search + filter with URL state.
 - **Theme F — Publisher-anomaly detector.** Three concrete anomaly types (maintainer email drift, OIDC regression, version jump). npm API + GitHub API ingestion, Postgres-backed publisher history table.
