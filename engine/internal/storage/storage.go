@@ -54,5 +54,14 @@ type Storage interface {
 	GetPublisherHistory(ctx context.Context, packageRef string, limit int) ([]domain.PublisherSnapshot, error)
 	ListPackagesNeedingRefresh(ctx context.Context, olderThan time.Time, limit int) ([]string, error)
 
+	// Anomaly — Theme F2 detector hits. SaveAnomaly is idempotent on
+	// (Kind, PackageRef, DetectedAt) — re-running a detector over
+	// the same snapshot history is a no-op rather than producing
+	// duplicates. GetAnomaly + ListAnomalies serve the
+	// `GET /v1/anomalies` surface.
+	SaveAnomaly(ctx context.Context, a domain.Anomaly) (int64, error)
+	GetAnomaly(ctx context.Context, id int64) (*domain.Anomaly, error)
+	ListAnomalies(ctx context.Context, filter domain.AnomalyFilter) ([]domain.Anomaly, error)
+
 	Close() error
 }

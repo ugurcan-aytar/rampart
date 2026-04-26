@@ -25,6 +25,7 @@ func Run(t *testing.T, newStore func() storage.Storage) {
 	t.Run("Remediation", func(t *testing.T) { testRemediation(t, newStore) })
 	t.Run("Publisher", func(t *testing.T) { testPublisher(t, newStore) })
 	t.Run("PublisherSnapshot", func(t *testing.T) { testPublisherSnapshot(t, newStore) })
+	t.Run("Anomaly", func(t *testing.T) { testAnomaly(t, newStore) })
 }
 
 func testComponent(t *testing.T, newStore func() storage.Storage) {
@@ -328,4 +329,102 @@ func testPublisherSnapshot(t *testing.T, newStore func() storage.Storage) {
 	stale3, err := s.ListPackagesNeedingRefresh(ctx, now.Add(time.Minute), 1)
 	require.NoError(t, err)
 	require.Len(t, stale3, 1)
+}
+
+func testAnomaly(t *testing.T, newStore func() storage.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	s := newStore()
+	defer s.Close()
+
+	now := time.Now().UTC().Truncate(time.Microsecond) // postgres truncates μs
+	earlier := now.Add(-2 * time.Hour)
+
+	a1 := domain.Anomaly{
+		Kind:        domain.AnomalyKindMaintainerEmailDrift,
+		PackageRef:  "npm:axios",
+		DetectedAt:  now,
+		Confidence:  domain.ConfidenceHigh,
+		Explanation: "new maintainer email registered 3h before publish",
+		Evidence:    map[string]any{"new_email": "x@bad.io", "publish_age_hours": float64(3)},
+	}
+	a2 := domain.Anomaly{
+		Kind:        domain.AnomalyKindOIDCPublishingRegression,
+		PackageRef:  "npm:axios",
+		DetectedAt:  earlier,
+		Confidence:  domain.ConfidenceMedium,
+		Explanation: "publish_method went OIDC → token",
+		Evidence:    map[string]any{},
+	}
+	a3 := domain.Anomaly{
+		Kind:       domain.AnomalyKindVersionJump,
+		PackageRef: "npm:left-pad",
+		DetectedAt: now,
+		Confidence: domain.ConfidenceLow,
+		Evidence:   map[string]any{"old_major": float64(1), "new_major": float64(99)},
+	}
+
+	id1, err := s.SaveAnomaly(ctx, a1)
+	require.NoError(t, err)
+	require.NotZero(t, id1)
+	id2, err := s.SaveAnomaly(ctx, a2)
+	require.NoError(t, err)
+	require.NotEqual(t, id1, id2)
+	id3, err := s.SaveAnomaly(ctx, a3)
+	require.NoError(t, err)
+
+	// Idempotency: re-saving the same (kind, package_ref, detected_at)
+	// returns the existing id, does not duplicate.
+	id1again, err := s.SaveAnomaly(ctx, a1)
+	require.NoError(t, err)
+	require.Equal(t, id1, id1again, "dedup must return existing id")
+
+	// Get by id round-trips fields including Evidence.
+	got, err := s.GetAnomaly(ctx, id1)
+	require.NoError(t, err)
+	require.Equal(t, domain.AnomalyKindMaintainerEmailDrift, got.Kind)
+	require.Equal(t, "npm:axios", got.PackageRef)
+	require.Equal(t, domain.ConfidenceHigh, got.Confidence)
+	require.Equal(t, "x@bad.io", got.Evidence["new_email"])
+
+	_, err = s.GetAnomaly(ctx, 999_999)
+	require.True(t, errors.Is(err, storage.ErrNotFound))
+
+	// ListAnomalies — newest first across the table.
+	all, err := s.ListAnomalies(ctx, domain.AnomalyFilter{})
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	require.True(t, !all[0].DetectedAt.Before(all[1].DetectedAt), "newest-first")
+
+	// Filter by package_ref.
+	axiosOnly, err := s.ListAnomalies(ctx, domain.AnomalyFilter{PackageRef: "npm:axios"})
+	require.NoError(t, err)
+	require.Len(t, axiosOnly, 2)
+	for _, a := range axiosOnly {
+		require.Equal(t, "npm:axios", a.PackageRef)
+	}
+
+	// Filter by kind.
+	regressionOnly, err := s.ListAnomalies(ctx, domain.AnomalyFilter{
+		Kind: domain.AnomalyKindOIDCPublishingRegression,
+	})
+	require.NoError(t, err)
+	require.Len(t, regressionOnly, 1)
+	require.Equal(t, id2, regressionOnly[0].ID)
+
+	// Time window: only the `now` anomalies.
+	window := now.Add(-time.Minute)
+	recent, err := s.ListAnomalies(ctx, domain.AnomalyFilter{From: &window})
+	require.NoError(t, err)
+	require.Len(t, recent, 2)
+	for _, a := range recent {
+		require.False(t, a.DetectedAt.Before(window))
+	}
+
+	// Limit caps result count.
+	limited, err := s.ListAnomalies(ctx, domain.AnomalyFilter{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+
+	_ = id3 // referenced via the `all` count assertion
 }

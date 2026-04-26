@@ -28,6 +28,19 @@ type Store struct {
 	// BIGSERIAL so contract tests see the same monotonic-id semantics.
 	publisherHistory map[string][]domain.PublisherSnapshot
 	nextSnapshotID   int64
+
+	// anomalies are keyed by id (BIGSERIAL-style); the dedup index
+	// mirrors the postgres UNIQUE (kind, package_ref, detected_at)
+	// constraint so re-runs from a detector are idempotent.
+	anomalies     map[int64]domain.Anomaly
+	anomalyDedup  map[anomalyDedupKey]int64
+	nextAnomalyID int64
+}
+
+type anomalyDedupKey struct {
+	Kind       string
+	PackageRef string
+	DetectedAt time.Time
 }
 
 type publisherKey struct {
@@ -44,6 +57,8 @@ func New() *Store {
 		publishers:       map[publisherKey]domain.Publisher{},
 		profiles:         map[publisherKey]domain.PublisherProfile{},
 		publisherHistory: map[string][]domain.PublisherSnapshot{},
+		anomalies:        map[int64]domain.Anomaly{},
+		anomalyDedup:     map[anomalyDedupKey]int64{},
 	}
 }
 
@@ -316,6 +331,67 @@ func (s *Store) ListPackagesNeedingRefresh(ctx context.Context, olderThan time.T
 		if limit > 0 && len(out) >= limit {
 			break
 		}
+	}
+	return out, ctx.Err()
+}
+
+// --- Anomaly ------------------------------------------------------------
+
+func (s *Store) SaveAnomaly(ctx context.Context, a domain.Anomaly) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if a.DetectedAt.IsZero() {
+		a.DetectedAt = time.Now().UTC()
+	} else {
+		a.DetectedAt = a.DetectedAt.UTC()
+	}
+	dk := anomalyDedupKey{Kind: string(a.Kind), PackageRef: a.PackageRef, DetectedAt: a.DetectedAt}
+	if existing, ok := s.anomalyDedup[dk]; ok {
+		return existing, ctx.Err()
+	}
+	s.nextAnomalyID++
+	a.ID = s.nextAnomalyID
+	s.anomalies[a.ID] = a
+	s.anomalyDedup[dk] = a.ID
+	return a.ID, ctx.Err()
+}
+
+func (s *Store) GetAnomaly(ctx context.Context, id int64) (*domain.Anomaly, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	a, ok := s.anomalies[id]
+	if !ok {
+		return nil, storage.ErrNotFound
+	}
+	out := a
+	return &out, ctx.Err()
+}
+
+func (s *Store) ListAnomalies(ctx context.Context, filter domain.AnomalyFilter) ([]domain.Anomaly, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]domain.Anomaly, 0)
+	for _, a := range s.anomalies {
+		if filter.PackageRef != "" && a.PackageRef != filter.PackageRef {
+			continue
+		}
+		if filter.Kind != "" && a.Kind != filter.Kind {
+			continue
+		}
+		if filter.From != nil && a.DetectedAt.Before(*filter.From) {
+			continue
+		}
+		if filter.To != nil && a.DetectedAt.After(*filter.To) {
+			continue
+		}
+		out = append(out, a)
+	}
+	// Newest-first; matches postgres ORDER BY detected_at DESC.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].DetectedAt.After(out[j].DetectedAt)
+	})
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
 	}
 	return out, ctx.Err()
 }
