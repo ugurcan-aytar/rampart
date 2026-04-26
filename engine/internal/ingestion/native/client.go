@@ -37,6 +37,7 @@ const (
 	msgParseResult       byte = 0x02
 	msgError             byte = 0x03
 	msgParseGomodRequest byte = 0x06
+	msgParseCargoRequest byte = 0x07
 	msgPong              byte = 0xFE
 	msgPing              byte = 0xFF
 )
@@ -153,6 +154,20 @@ func (c *Client) ParseGoModule(ctx context.Context, gosumContent, gomodContent [
 	frame = append(frame, gosumContent...)
 	frame = binary.BigEndian.AppendUint32(frame, uint32(len(gomodContent))) //nolint:gosec // G115: bounded by MaxFrameBytes
 	frame = append(frame, gomodContent...)
+	return c.parseDispatch(ctx, frame)
+}
+
+// ParseCargo asks the Rust parser to parse a Cargo.lock body.
+func (c *Client) ParseCargo(ctx context.Context, content []byte) (*domain.ParsedSBOM, error) {
+	bodyLen := 1 + 4 + len(content)
+	if bodyLen > MaxFrameBytes {
+		return nil, fmt.Errorf("request body %d exceeds MaxFrameBytes %d", bodyLen, MaxFrameBytes)
+	}
+	frame := make([]byte, 0, 4+bodyLen)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(bodyLen)) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, msgParseCargoRequest)
+	frame = binary.BigEndian.AppendUint32(frame, uint32(len(content))) //nolint:gosec // G115: bounded by MaxFrameBytes
+	frame = append(frame, content...)
 	return c.parseDispatch(ctx, frame)
 }
 

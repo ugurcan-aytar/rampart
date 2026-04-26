@@ -13,6 +13,8 @@
 //!   * `0x06` parse_gomod_lockfile (Theme C1)
 //!     - 4-byte BE gosum_length + go.sum content
 //!     - 4-byte BE gomod_length + go.mod content (may be 0)
+//!   * `0x07` parse_cargo_lockfile (Theme C2)
+//!     - 4-byte BE content_length + Cargo.lock bytes
 //!   * `0xFF` ping — body is just the opcode byte
 //!
 //! Response opcodes (server → client):
@@ -30,6 +32,7 @@ pub const MSG_PARSE_REQUEST: u8 = 0x01;
 pub const MSG_PARSE_RESULT: u8 = 0x02;
 pub const MSG_ERROR: u8 = 0x03;
 pub const MSG_PARSE_GOMOD_REQUEST: u8 = 0x06;
+pub const MSG_PARSE_CARGO_REQUEST: u8 = 0x07;
 pub const MSG_PONG: u8 = 0xFE;
 pub const MSG_PING: u8 = 0xFF;
 
@@ -48,6 +51,9 @@ pub enum Request {
     ParseGomod {
         gosum: Vec<u8>,
         gomod: Vec<u8>,
+    },
+    ParseCargo {
+        content: Vec<u8>,
     },
     Ping,
 }
@@ -92,6 +98,15 @@ pub fn decode_request_body(body: &[u8]) -> Result<Request, DecodeError> {
             Ok(Request::ParseGomod {
                 gosum: gosum.to_vec(),
                 gomod: gomod.to_vec(),
+            })
+        }
+        MSG_PARSE_CARGO_REQUEST => {
+            let (content, rest) = read_length_prefixed(rest)?;
+            if !rest.is_empty() {
+                return Err(DecodeError::TrailingBytes);
+            }
+            Ok(Request::ParseCargo {
+                content: content.to_vec(),
             })
         }
         MSG_PING => {
@@ -196,6 +211,22 @@ mod tests {
     }
 
     #[test]
+    fn decode_parse_cargo_happy_path() {
+        let content = b"version = 4\n";
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_CARGO_REQUEST);
+        body.extend_from_slice(&(content.len() as u32).to_be_bytes());
+        body.extend_from_slice(content);
+        let req = decode_request_body(&body).unwrap();
+        assert_eq!(
+            req,
+            Request::ParseCargo {
+                content: content.to_vec(),
+            }
+        );
+    }
+
+    #[test]
     fn decode_ping() {
         let body = [MSG_PING];
         assert_eq!(decode_request_body(&body).unwrap(), Request::Ping);
@@ -222,6 +253,18 @@ mod tests {
         let mut body = Vec::new();
         body.push(MSG_PARSE_REQUEST);
         body.extend_from_slice(&0u32.to_be_bytes());
+        body.extend_from_slice(&0u32.to_be_bytes());
+        body.push(0xAA);
+        assert_eq!(
+            decode_request_body(&body).unwrap_err(),
+            DecodeError::TrailingBytes
+        );
+    }
+
+    #[test]
+    fn decode_rejects_trailing_bytes_on_cargo() {
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_CARGO_REQUEST);
         body.extend_from_slice(&0u32.to_be_bytes());
         body.push(0xAA);
         assert_eq!(

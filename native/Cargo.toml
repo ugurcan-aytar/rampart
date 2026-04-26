@@ -37,6 +37,7 @@ tracing = "0.1"           # structured logging; ref: https://tracing.rs
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 
 base64 = "0.22"           # stdlib-style {encode,decode} for wire payloads
+toml = "0.8"              # Cargo.lock parser; ref: https://docs.rs/toml
 
 [workspace.lints.rust]
 unsafe_code = "forbid"    # pure Rust only — keeps auditing trivial

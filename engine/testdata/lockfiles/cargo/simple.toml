@@ -1,0 +1,35 @@
+# Synthetic Cargo.lock fixture covering the three source kinds:
+#   * registry (with checksum)
+#   * git      (no checksum, source carries commit ref)
+#   * workspace-local (no source — must be filtered out)
+#
+# Frozen for byte-for-byte parity between Go and Rust parsers.
+version = 4
+
+[[package]]
+name = "rampart-sample"
+version = "0.1.0"
+
+[[package]]
+name = "serde"
+version = "1.0.215"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha2-abc123def456"
+
+[[package]]
+name = "thiserror"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha2-deadbeef"
+dependencies = ["thiserror-impl"]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "sha2-cafebabe"
+
+[[package]]
+name = "exotic-fork"
+version = "0.0.0"
+source = "git+https://github.com/example/exotic?branch=main#0123456789abcdef"

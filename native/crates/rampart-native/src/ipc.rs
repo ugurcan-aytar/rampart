@@ -7,7 +7,8 @@
 //!   - One task per accepted connection.
 //!   - Framing: 4-byte BE outer length + binary body, body opens with a
 //!     1-byte opcode. See `protocol.rs`.
-//!   - Request kinds: `parse_npm_lockfile`, `parse_gomod_lockfile`, `ping`.
+//!   - Request kinds: `parse_npm_lockfile`, `parse_gomod_lockfile`,
+//!     `parse_cargo_lockfile`, `ping`.
 //!
 //! Platform scope: Unix only (`tokio::net::UnixListener` requires `cfg(unix)`
 //! per https://docs.rs/tokio/latest/tokio/net/struct.UnixListener.html).
@@ -21,7 +22,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 use tracing::{debug, error, info, warn};
 
-use crate::parsers::{gomod, npm, ParseError, ParsedSbom};
+use crate::parsers::{cargo, gomod, npm, ParseError, ParsedSbom};
 use crate::protocol::{
     decode_request_body, encode_error, encode_parse_result, encode_pong, Request, MAX_FRAME_BYTES,
 };
@@ -190,6 +191,9 @@ fn handle_body(body: &[u8]) -> Vec<u8> {
         Request::ParseGomod { gosum, gomod } => {
             dispatch_parse("gomod", gomod::parse(&gosum, &gomod), gosum.len() + gomod.len())
         }
+        Request::ParseCargo { content } => {
+            dispatch_parse("cargo", cargo::parse(&content), content.len())
+        }
     }
 }
 
@@ -231,8 +235,8 @@ fn dispatch_parse(
 mod tests {
     use super::*;
     use crate::protocol::{
-        MSG_ERROR, MSG_PARSE_GOMOD_REQUEST, MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING,
-        MSG_PONG,
+        MSG_ERROR, MSG_PARSE_CARGO_REQUEST, MSG_PARSE_GOMOD_REQUEST, MSG_PARSE_REQUEST,
+        MSG_PARSE_RESULT, MSG_PING, MSG_PONG,
     };
 
     fn build_parse_request_body(content: &[u8]) -> Vec<u8> {
@@ -317,4 +321,20 @@ mod tests {
         assert_eq!(v["Packages"].as_array().unwrap().len(), 1);
     }
 
+    #[test]
+    fn handle_parse_cargo_returns_result() {
+        let content =
+            b"[[package]]\nname=\"serde\"\nversion=\"1.0.0\"\nsource=\"registry+https://x\"\n";
+        let mut body = Vec::new();
+        body.push(MSG_PARSE_CARGO_REQUEST);
+        body.extend_from_slice(&(content.len() as u32).to_be_bytes());
+        body.extend_from_slice(content);
+        let resp = handle_body(&body);
+        assert_eq!(resp[4], MSG_PARSE_RESULT);
+        let sbom_len = u32::from_be_bytes([resp[5], resp[6], resp[7], resp[8]]) as usize;
+        let json = &resp[9..9 + sbom_len];
+        let v: serde_json::Value = serde_json::from_slice(json).unwrap();
+        assert_eq!(v["Ecosystem"], "cargo");
+        assert_eq!(v["Packages"].as_array().unwrap().len(), 1);
+    }
 }

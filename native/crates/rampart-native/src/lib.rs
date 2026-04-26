@@ -9,9 +9,9 @@ pub mod ipc;
 pub mod parsers;
 pub mod protocol;
 
-pub use parsers::{gomod, npm, PackageVersion, ParseError, ParsedSbom};
+pub use parsers::{cargo, gomod, npm, PackageVersion, ParseError, ParsedSbom};
 pub use protocol::{
     decode_request_body, encode_error, encode_parse_result, encode_pong, DecodeError, Request,
-    MAX_FRAME_BYTES, MSG_ERROR, MSG_PARSE_GOMOD_REQUEST, MSG_PARSE_REQUEST, MSG_PARSE_RESULT,
-    MSG_PING, MSG_PONG,
+    MAX_FRAME_BYTES, MSG_ERROR, MSG_PARSE_CARGO_REQUEST, MSG_PARSE_GOMOD_REQUEST,
+    MSG_PARSE_REQUEST, MSG_PARSE_RESULT, MSG_PING, MSG_PONG,
 };

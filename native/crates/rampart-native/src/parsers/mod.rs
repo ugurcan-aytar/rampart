@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+pub mod cargo;
 pub mod gomod;
 pub mod npm;
 
@@ -26,6 +27,12 @@ pub enum ParseError {
 
 impl From<serde_json::Error> for ParseError {
     fn from(e: serde_json::Error) -> Self {
+        ParseError::Malformed(e.to_string())
+    }
+}
+
+impl From<toml::de::Error> for ParseError {
+    fn from(e: toml::de::Error) -> Self {
         ParseError::Malformed(e.to_string())
     }
 }

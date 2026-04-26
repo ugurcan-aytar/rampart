@@ -11,6 +11,7 @@ import (
 
 	"github.com/ugurcan-aytar/rampart/cli/internal/output"
 	"github.com/ugurcan-aytar/rampart/engine/ingestion"
+	"github.com/ugurcan-aytar/rampart/engine/sbom/cargo"
 	"github.com/ugurcan-aytar/rampart/engine/sbom/gomod"
 	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
@@ -22,6 +23,7 @@ import (
 //
 //   - package-lock.json → npm
 //   - go.sum            → gomod (sibling go.mod is read if present)
+//   - Cargo.lock        → cargo
 //
 // With neither --component-ref nor --commit-sha, Scan emits the pure
 // ParsedSBOM (no ID, no GeneratedAt) — the bytes coming straight out of
@@ -35,9 +37,9 @@ func Scan(ctx context.Context, args []string, stdout io.Writer) error {
 	format := fs.String("format", "text", "output format: text | json | sarif")
 	componentRef := fs.String("component-ref", "", "component reference (e.g. kind:Component/default/web-app)")
 	commitSHA := fs.String("commit-sha", "", "commit sha the lockfile was taken at")
-	ecosystem := fs.String("ecosystem", "", "force ecosystem: npm | gomod (default: auto-detect from filename)")
+	ecosystem := fs.String("ecosystem", "", "force ecosystem: npm | gomod | cargo (default: auto-detect from filename)")
 	fs.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: rampart scan [--format text|json|sarif] [--ecosystem npm|gomod] [--component-ref ref] [--commit-sha sha] <lockfile>")
+		fmt.Fprintln(os.Stderr, "usage: rampart scan [--format text|json|sarif] [--ecosystem npm|gomod|cargo] [--component-ref ref] [--commit-sha sha] <lockfile>")
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
@@ -116,6 +118,26 @@ func Scan(ctx context.Context, args []string, stdout io.Writer) error {
 			gen := full.GeneratedAt
 			genAt = &gen
 		}
+	case "cargo":
+		parsed, err := cargo.NewParser().Parse(ctx, content)
+		if err != nil {
+			return fmt.Errorf("parse %s: %w", path, err)
+		}
+		shape = &output.SBOM{
+			Ecosystem:    parsed.Ecosystem,
+			SourceFormat: parsed.SourceFormat,
+			SourceBytes:  parsed.SourceBytes,
+			Packages:     make([]output.PackageVersion, len(parsed.Packages)),
+		}
+		for i, p := range parsed.Packages {
+			shape.Packages[i] = output.PackageVersion{Ecosystem: p.Ecosystem, Name: p.Name, Version: p.Version, PURL: p.PURL, Scope: p.Scope, Integrity: p.Integrity}
+		}
+		if *componentRef != "" || *commitSHA != "" {
+			full := ingestion.Ingest(parsed, *componentRef, *commitSHA)
+			id, fullCompRef, fullCommit = full.ID, full.ComponentRef, full.CommitSHA
+			gen := full.GeneratedAt
+			genAt = &gen
+		}
 	default:
 		return fmt.Errorf("scan: unknown ecosystem %q", eco)
 	}
@@ -138,14 +160,18 @@ func Scan(ctx context.Context, args []string, stdout io.Writer) error {
 func resolveEcosystem(explicit, path string) (string, error) {
 	if explicit != "" {
 		switch explicit {
-		case "npm", "gomod":
+		case "npm", "gomod", "cargo":
 			return explicit, nil
 		default:
-			return "", fmt.Errorf("scan: unknown --ecosystem %q (want: npm | gomod)", explicit)
+			return "", fmt.Errorf("scan: unknown --ecosystem %q (want: npm | gomod | cargo)", explicit)
 		}
 	}
-	if filepath.Base(path) == "go.sum" {
+	switch filepath.Base(path) {
+	case "go.sum":
 		return "gomod", nil
+	case "Cargo.lock":
+		return "cargo", nil
+	default:
+		return "npm", nil
 	}
-	return "npm", nil
 }

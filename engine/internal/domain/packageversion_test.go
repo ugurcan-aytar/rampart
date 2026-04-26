@@ -21,6 +21,7 @@ func TestCanonicalPURL(t *testing.T) {
 		{"pypi plain", "pypi", "requests", "2.32.0", "pkg:pypi/requests@2.32.0"},
 		{"golang module", "golang", "github.com/google/uuid", "1.6.0", "pkg:golang/github.com/google/uuid@1.6.0"},
 		{"gomod maps to golang purl", "gomod", "github.com/spf13/cobra", "v1.8.0", "pkg:golang/github.com/spf13/cobra@v1.8.0"},
+		{"cargo plain", "cargo", "serde", "1.0.215", "pkg:cargo/serde@1.0.215"},
 		{"degenerate scope without slash", "npm", "@orphan", "1.0.0", "pkg:npm/@orphan@1.0.0"},
 	}
 	for _, tc := range tests {
