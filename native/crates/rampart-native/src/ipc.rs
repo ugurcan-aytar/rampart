@@ -188,9 +188,11 @@ fn handle_body(body: &[u8]) -> Vec<u8> {
             content,
             reserved_metadata: _,
         } => dispatch_parse("npm", npm::parse(&content), content.len()),
-        Request::ParseGomod { gosum, gomod } => {
-            dispatch_parse("gomod", gomod::parse(&gosum, &gomod), gosum.len() + gomod.len())
-        }
+        Request::ParseGomod { gosum, gomod } => dispatch_parse(
+            "gomod",
+            gomod::parse(&gosum, &gomod),
+            gosum.len() + gomod.len(),
+        ),
         Request::ParseCargo { content } => {
             dispatch_parse("cargo", cargo::parse(&content), content.len())
         }

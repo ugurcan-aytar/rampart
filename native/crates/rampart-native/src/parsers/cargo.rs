@@ -161,6 +161,9 @@ source = "git+https://github.com/rust-lang/exotic?branch=main#abcdef0123"
 
     #[test]
     fn purl_format_is_purl_spec_cargo() {
-        assert_eq!(canonical_purl("serde", "1.0.215"), "pkg:cargo/serde@1.0.215");
+        assert_eq!(
+            canonical_purl("serde", "1.0.215"),
+            "pkg:cargo/serde@1.0.215"
+        );
     }
 }

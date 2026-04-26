@@ -184,8 +184,7 @@ fn parse_replace_directive(line: &str) -> Option<(String, ReplaceTarget)> {
     let new_path = rhs_parts[0].to_string();
     // Local file-system replace: `=> ./relative/path` (no version, path
     // starts with `.` or `/`). Treated as drop-source.
-    let is_local =
-        new_path.starts_with('.') || new_path.starts_with('/') || rhs_parts.len() == 1;
+    let is_local = new_path.starts_with('.') || new_path.starts_with('/') || rhs_parts.len() == 1;
     let new_version = if is_local {
         None
     } else if rhs_parts.len() >= 2 {
@@ -246,7 +245,8 @@ mod tests {
     fn parse_remote_replace_substitutes_target() {
         let gosum = b"github.com/new/lib v2.0.0 h1:nh=\n\
                       github.com/new/lib v2.0.0/go.mod h1:nhm=\n";
-        let gomod = b"module example.com/x\nreplace github.com/old/lib => github.com/new/lib v2.0.0\n";
+        let gomod =
+            b"module example.com/x\nreplace github.com/old/lib => github.com/new/lib v2.0.0\n";
         let sbom = parse(gosum, gomod).unwrap();
         // Only the new module exists in go.sum (Go's behavior); the
         // replace target stays as it was.
