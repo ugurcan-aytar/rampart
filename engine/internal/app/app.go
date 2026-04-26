@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/ingestion"
@@ -22,6 +24,7 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/ingestion/native"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
+	pgstorage "github.com/ugurcan-aytar/rampart/engine/internal/storage/postgres"
 	"github.com/ugurcan-aytar/rampart/engine/internal/trust"
 	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
@@ -44,6 +47,30 @@ type App struct {
 	events            *events.Bus
 	server            *http.Server
 	effectiveStrategy npm.Strategy
+
+	// listener is set by Run after net.Listen succeeds; reads come
+	// from Addr() on a different goroutine in tests that boot the
+	// server in the background and poll for readiness, so it is
+	// guarded by listenerMu.
+	listenerMu sync.RWMutex
+	listener   net.Listener
+}
+
+// Addr reports the host:port the server actually bound to. When the
+// caller configures `:0` (ephemeral), this returns the resolved port
+// — useful to integration tests that need to issue HTTP calls without
+// racing against the OS listen. Returns the configured address until
+// Run has bound the listener.
+func (a *App) Addr() string {
+	if a == nil {
+		return ""
+	}
+	a.listenerMu.RLock()
+	defer a.listenerMu.RUnlock()
+	if a.listener != nil {
+		return a.listener.Addr().String()
+	}
+	return a.cfg.HTTPAddr
 }
 
 // Main is the top-level dispatcher: subcommand if args[0] matches one, otherwise
@@ -79,7 +106,10 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	if log == nil {
 		log = slog.Default()
 	}
-	store := memory.New()
+	store, err := openStorage(ctx, cfg, log)
+	if err != nil {
+		return nil, err
+	}
 	bus := events.NewBus(cfg.SSESubscriberBuffer)
 
 	requested := npm.Strategy(cfg.ParserStrategy)
@@ -118,13 +148,52 @@ func New(ctx context.Context, cfg *config.Config, log *slog.Logger) (*App, error
 	}, nil
 }
 
+// openStorage wires the configured storage backend. `memory` is a
+// no-dependency in-process map used by tests and throwaway demos;
+// `postgres` is the production default — it runs goose migrations
+// before returning the pool, so a fresh database works end-to-end
+// after one boot. Missing DSN on `postgres` is a fail-fast error.
+func openStorage(ctx context.Context, cfg *config.Config, log *slog.Logger) (storage.Storage, error) {
+	switch cfg.StorageBackend {
+	case "", "memory":
+		log.Info("storage backend: memory")
+		return memory.New(), nil
+	case "postgres":
+		if cfg.DBDSN == "" {
+			return nil, errors.New("storage=postgres but RAMPART_DB_DSN is empty")
+		}
+		if err := pgstorage.MigrateUp(ctx, cfg.DBDSN); err != nil {
+			return nil, fmt.Errorf("postgres: migrate: %w", err)
+		}
+		s, err := pgstorage.Open(ctx, cfg.DBDSN, cfg.DBMaxConns)
+		if err != nil {
+			return nil, err
+		}
+		log.Info("storage backend: postgres", "max_conns", cfg.DBMaxConns)
+		return s, nil
+	default:
+		return nil, fmt.Errorf("unknown RAMPART_STORAGE=%q (expected memory or postgres)", cfg.StorageBackend)
+	}
+}
+
 // Run starts the HTTP server and blocks until ctx is cancelled.
+// Run binds the listener synchronously before returning from the
+// goroutine spawn so callers that inspect Addr immediately after Run
+// see the resolved port — matters when cfg.HTTPAddr asks for an
+// ephemeral port (`:0`) in integration tests.
 func (a *App) Run(ctx context.Context) error {
-	a.log.Info("engine starting", "addr", a.cfg.HTTPAddr)
+	l, err := net.Listen("tcp", a.cfg.HTTPAddr)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", a.cfg.HTTPAddr, err)
+	}
+	a.listenerMu.Lock()
+	a.listener = l
+	a.listenerMu.Unlock()
+	a.log.Info("engine starting", "addr", l.Addr().String())
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := a.server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 			return
 		}

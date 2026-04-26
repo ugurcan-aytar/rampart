@@ -106,6 +106,7 @@ func silentLogger() *slog.Logger {
 func TestApp_New_WithDefaults(t *testing.T) {
 	cfg := config.Default()
 	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.StorageBackend = "memory" // unit tests must not require a live Postgres
 	a, err := app.New(context.Background(), cfg, silentLogger())
 	require.NoError(t, err)
 	require.NotNil(t, a)
@@ -115,6 +116,7 @@ func TestApp_New_WithDefaults(t *testing.T) {
 func TestApp_New_NilLoggerFallsBack(t *testing.T) {
 	cfg := config.Default()
 	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.StorageBackend = "memory" // unit tests must not require a live Postgres
 	a, err := app.New(context.Background(), cfg, nil)
 	require.NoError(t, err, "nil logger must fall back to slog.Default()")
 	require.NotNil(t, a)
@@ -124,6 +126,7 @@ func TestApp_New_NilLoggerFallsBack(t *testing.T) {
 func TestApp_Run_GracefulShutdownOnCancel(t *testing.T) {
 	cfg := config.Default()
 	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.StorageBackend = "memory" // unit tests must not require a live Postgres
 	a, err := app.New(context.Background(), cfg, silentLogger())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = a.Close() })
@@ -147,6 +150,7 @@ func TestApp_Run_GracefulShutdownOnCancel(t *testing.T) {
 func TestApp_Close_Idempotent(t *testing.T) {
 	cfg := config.Default()
 	cfg.HTTPAddr = "127.0.0.1:0"
+	cfg.StorageBackend = "memory" // unit tests must not require a live Postgres
 	a, err := app.New(context.Background(), cfg, silentLogger())
 	require.NoError(t, err)
 	require.NoError(t, a.Close())

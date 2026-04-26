@@ -1,6 +1,9 @@
 # Rampart demo stack.
 # Default profile (`docker compose up`):
 #   engine              — Go core, HTTP + SSE API on :8080
+#   postgres            — persistent storage (v0.2.0 Theme D default).
+#                         RAMPART_STORAGE=memory skips it for throwaway
+#                         demos that do not need state across restart.
 #   mock-npm-registry   — demo-only canned lockfile + IoC feed on :8081
 #   slack-notifier      — SSE consumer; default SLACK_WEBHOOK_URL="" =>
 #                         dry-run (logs payloads instead of POSTing)
@@ -12,16 +15,32 @@
 # Opt-in `--profile native` adds:
 #   rampart-native      — Rust lockfile parser over UDS (ADR-0005 opt-in).
 #
-# Not wired in Phase 1 (engine uses in-memory storage):
-#   postgres — Phase 2 storage backend; compose entry lands when
-#     the engine gains a real DB repo.
-#
 # Usage:
 #   docker compose up -d                       # go parser, no sidecar
 #   RAMPART_PARSER_STRATEGY=native \
 #     docker compose --profile native up -d    # rust sidecar, ADR-0005
+#   RAMPART_STORAGE=memory docker compose up -d  # skip postgres
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: rampart
+      POSTGRES_PASSWORD: rampart
+      POSTGRES_DB: rampart
+    ports:
+      - "5432:5432"
+    volumes:
+      - rampart-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` exits 0 once the server accepts auth'd connections,
+      # which is what the engine's depends_on condition waits for.
+      test: ["CMD-SHELL", "pg_isready -U rampart -d rampart"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
   engine:
     build:
       context: ./engine
@@ -30,6 +49,14 @@ services:
     environment:
       RAMPART_PARSER_STRATEGY: ${RAMPART_PARSER_STRATEGY:-go}
       RAMPART_NATIVE_SOCKET: /var/run/rampart/native.sock
+      # v0.2.0 default is Postgres. Operators can override to `memory`
+      # for throwaway demos that don't need persistence; RAMPART_DB_DSN
+      # then becomes optional.
+      RAMPART_STORAGE: ${RAMPART_STORAGE:-postgres}
+      RAMPART_DB_DSN: postgres://rampart:rampart@postgres:5432/rampart?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
     volumes:
       - native-sock:/var/run/rampart
     ports:
@@ -113,3 +140,6 @@ volumes:
   # native bind-mount it read-write when both are running; when the
   # native profile is disabled, the volume is still created but empty.
   native-sock:
+  # Postgres data directory; survives container restarts so incident
+  # timelines and component/SBOM state persist across redeploys.
+  rampart-pg-data:

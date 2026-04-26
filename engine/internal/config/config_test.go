@@ -17,6 +17,24 @@ func TestDefault(t *testing.T) {
 	require.Equal(t, "/var/run/rampart/native.sock", c.NativeSocketPath)
 	require.Equal(t, 15*time.Second, c.SSEHeartbeatInterval)
 	require.Equal(t, 256, c.SSESubscriberBuffer)
+	require.Equal(t, "postgres", c.StorageBackend)
+	require.Equal(t, int32(10), c.DBMaxConns)
+}
+
+func TestFromEnv_StorageOverrides(t *testing.T) {
+	t.Setenv("RAMPART_STORAGE", "memory")
+	t.Setenv("RAMPART_DB_DSN", "postgres://rampart:rampart@db:5432/rampart?sslmode=disable")
+	t.Setenv("RAMPART_DB_MAX_CONNS", "25")
+	c := config.FromEnv()
+	require.Equal(t, "memory", c.StorageBackend)
+	require.Equal(t, "postgres://rampart:rampart@db:5432/rampart?sslmode=disable", c.DBDSN)
+	require.Equal(t, int32(25), c.DBMaxConns)
+}
+
+func TestFromEnv_InvalidMaxConnsKeepsDefault(t *testing.T) {
+	t.Setenv("RAMPART_DB_MAX_CONNS", "not-a-number")
+	c := config.FromEnv()
+	require.Equal(t, int32(10), c.DBMaxConns, "unparseable max-conns must keep the default")
 }
 
 func TestFromEnv_NoOverrides(t *testing.T) {
