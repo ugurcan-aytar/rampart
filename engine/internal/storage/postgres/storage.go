@@ -634,6 +634,134 @@ func (s *Store) ListPublishers(ctx context.Context, ecosystem string) ([]domain.
 	return out, rows.Err()
 }
 
+// --- PublisherSnapshot ----------------------------------------------------
+
+func (s *Store) SavePublisherSnapshot(ctx context.Context, snap domain.PublisherSnapshot) error {
+	maintainersJSON, err := marshalJSON(snap.Maintainers)
+	if err != nil {
+		return err
+	}
+	rawData := snap.RawData
+	if len(rawData) == 0 {
+		rawData = []byte(`null`)
+	}
+	snapAt := snap.SnapshotAt
+	if snapAt.IsZero() {
+		snapAt = time.Now().UTC()
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO publisher_history
+		    (package_ref, snapshot_at, maintainers, latest_version,
+		     latest_version_published_at, publish_method, source_repo_url, raw_data)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		snap.PackageRef, snapAt, maintainersJSON,
+		nullableString(snap.LatestVersion), snap.LatestVersionPublishedAt,
+		nullableString(snap.PublishMethod), snap.SourceRepoURL,
+		rawData,
+	)
+	return wrapPgErr(err, "SavePublisherSnapshot")
+}
+
+func (s *Store) GetPublisherHistory(ctx context.Context, packageRef string, limit int) ([]domain.PublisherSnapshot, error) {
+	// limit ≤ 0 means "no cap" — translate to a large pg-friendly bound
+	// rather than skipping the LIMIT clause, so the query plan is stable.
+	const noLimitSentinel = 1 << 31
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = noLimitSentinel
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, package_ref, snapshot_at, maintainers, latest_version,
+		       latest_version_published_at, publish_method, source_repo_url, raw_data
+		FROM publisher_history
+		WHERE package_ref = $1
+		ORDER BY snapshot_at DESC
+		LIMIT $2`, packageRef, effectiveLimit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: GetPublisherHistory: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.PublisherSnapshot{}
+	for rows.Next() {
+		var (
+			snap          domain.PublisherSnapshot
+			maintainersB  []byte
+			rawDataB      []byte
+			latestVer     *string
+			latestVerPub  *time.Time
+			publishMethod *string
+			sourceRepoURL *string
+		)
+		if err := rows.Scan(
+			&snap.ID, &snap.PackageRef, &snap.SnapshotAt, &maintainersB,
+			&latestVer, &latestVerPub, &publishMethod, &sourceRepoURL, &rawDataB,
+		); err != nil {
+			return nil, err
+		}
+		snap.SnapshotAt = snap.SnapshotAt.UTC()
+		if err := unmarshalJSON(maintainersB, &snap.Maintainers); err != nil {
+			return nil, err
+		}
+		if latestVer != nil {
+			snap.LatestVersion = *latestVer
+		}
+		if latestVerPub != nil {
+			t := latestVerPub.UTC()
+			snap.LatestVersionPublishedAt = &t
+		}
+		if publishMethod != nil {
+			snap.PublishMethod = *publishMethod
+		}
+		snap.SourceRepoURL = sourceRepoURL
+		if len(rawDataB) > 0 && string(rawDataB) != "null" {
+			snap.RawData = rawDataB
+		}
+		out = append(out, snap)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) ListPackagesNeedingRefresh(ctx context.Context, olderThan time.Time, limit int) ([]string, error) {
+	const noLimitSentinel = 1 << 31
+	effectiveLimit := limit
+	if effectiveLimit <= 0 {
+		effectiveLimit = noLimitSentinel
+	}
+	// MAX(snapshot_at) collapses each package's history to its newest
+	// row; HAVING filters to packages whose latest snapshot is older than
+	// the threshold; ORDER BY ASC puts the stalest first.
+	rows, err := s.pool.Query(ctx, `
+		SELECT package_ref
+		FROM publisher_history
+		GROUP BY package_ref
+		HAVING MAX(snapshot_at) < $1
+		ORDER BY MAX(snapshot_at) ASC
+		LIMIT $2`, olderThan, effectiveLimit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: ListPackagesNeedingRefresh: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
+// nullableString returns nil for empty strings so optional TEXT
+// columns store NULL instead of an empty value (matches the in-memory
+// "absent → nil" semantics).
+func nullableString(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // nonNilStrings returns an empty slice for nil so pgx's array encoder

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 )
@@ -45,6 +46,13 @@ type Storage interface {
 	UpsertPublisherProfile(ctx context.Context, p domain.PublisherProfile) error
 	GetPublisherProfile(ctx context.Context, ecosystem, name string) (*domain.PublisherProfile, error)
 	ListPublishers(ctx context.Context, ecosystem string) ([]domain.Publisher, error)
+
+	// PublisherSnapshot — append-only time-series of upstream publisher
+	// metadata. Theme F1 ingests these from npm + GitHub APIs; Theme F2
+	// detectors diff successive snapshots to raise PublisherSignals.
+	SavePublisherSnapshot(ctx context.Context, snapshot domain.PublisherSnapshot) error
+	GetPublisherHistory(ctx context.Context, packageRef string, limit int) ([]domain.PublisherSnapshot, error)
+	ListPackagesNeedingRefresh(ctx context.Context, olderThan time.Time, limit int) ([]string, error)
 
 	Close() error
 }
