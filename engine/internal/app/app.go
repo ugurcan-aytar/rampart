@@ -26,6 +26,9 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
 	pgstorage "github.com/ugurcan-aytar/rampart/engine/internal/storage/postgres"
 	"github.com/ugurcan-aytar/rampart/engine/internal/trust"
+	"github.com/ugurcan-aytar/rampart/engine/publisher"
+	pubgithub "github.com/ugurcan-aytar/rampart/engine/publisher/github"
+	pubnpm "github.com/ugurcan-aytar/rampart/engine/publisher/npm"
 	"github.com/ugurcan-aytar/rampart/engine/sbom/npm"
 )
 
@@ -191,6 +194,12 @@ func (a *App) Run(ctx context.Context) error {
 	a.listenerMu.Unlock()
 	a.log.Info("engine starting", "addr", l.Addr().String())
 
+	// Optional publisher refresh scheduler (Theme F1). Default OFF —
+	// callers opt in via RAMPART_PUBLISHER_ENABLED=true; otherwise
+	// startScheduler is a no-op so `make demo-axios` stays unchanged.
+	stopScheduler := a.startPublisherScheduler(ctx)
+	defer stopScheduler()
+
 	errCh := make(chan error, 1)
 	go func() {
 		if err := a.server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -208,6 +217,50 @@ func (a *App) Run(ctx context.Context) error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return a.server.Shutdown(shutdownCtx)
+	}
+}
+
+// startPublisherScheduler is a no-op when PublisherEnabled is false,
+// so the demo path stays free of outbound API calls. When enabled, it
+// wires the npm + GitHub ingestors and runs the scheduler in a
+// goroutine; the returned func cancels the scheduler's ctx + waits
+// briefly for it to settle.
+func (a *App) startPublisherScheduler(parentCtx context.Context) func() {
+	noop := func() {}
+	if !a.cfg.PublisherEnabled {
+		return noop
+	}
+	ingestors := map[string]publisher.Ingestor{
+		"npm:":   pubnpm.New(pubnpm.Config{}),
+		"gomod:": pubgithub.New(pubgithub.Config{Token: a.cfg.GithubToken}),
+		// `github:` refs route through the same GitHub ingestor; the
+		// ingestor itself does the prefix-vs-prefix routing inside.
+		"github:": pubgithub.New(pubgithub.Config{Token: a.cfg.GithubToken}),
+	}
+	sch, err := publisher.NewScheduler(publisher.SchedulerConfig{
+		Storage:         a.storage,
+		Ingestors:       ingestors,
+		RefreshInterval: a.cfg.PublisherRefreshInterval,
+		BatchSize:       a.cfg.PublisherBatchSize,
+		Logger:          a.log,
+	})
+	if err != nil {
+		a.log.Error("publisher scheduler config invalid; not starting", "err", err)
+		return noop
+	}
+	schCtx, cancel := context.WithCancel(parentCtx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = sch.Run(schCtx)
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			a.log.Warn("publisher scheduler did not stop within 2s")
+		}
 	}
 }
 

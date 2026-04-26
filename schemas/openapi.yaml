@@ -39,6 +39,11 @@ tags:
     description: Incident lifecycle and remediation.
   - name: stream
     description: Server-sent-events stream of live domain events.
+  - name: publishers
+    description: |
+      Publisher metadata snapshots collected from upstream registries
+      (npm, GitHub). Theme F1 ingests; Theme F2 will diff successive
+      snapshots to raise PublisherSignals.
   - name: auth
     description: |
       Authentication token issuance. The engine validates JWTs on every
@@ -346,6 +351,34 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/BlastRadiusResponse' }
+
+  /v1/publisher/{packageRef}/history:
+    parameters:
+      - name: packageRef
+        in: path
+        required: true
+        description: |
+          `<ecosystem>:<name>` — e.g. `npm:axios`, `gomod:github.com/spf13/cobra`,
+          `cargo:tokio`. Slashes inside the ecosystem-specific name segment
+          must be URL-encoded by the client (`%2F`).
+        schema: { type: string }
+        example: 'npm:axios'
+      - name: limit
+        in: query
+        required: false
+        description: Cap on returned snapshots; default 100, max 500.
+        schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    get:
+      tags: [publishers]
+      operationId: GetPublisherHistory
+      summary: Newest-first list of publisher snapshots for a package.
+      responses:
+        '200':
+          description: Snapshot history (possibly empty).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PublisherHistory' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /v1/stream:
     get:
@@ -688,6 +721,68 @@ components:
         name: { type: string, example: axios-maintainer }
         firstSeen: { type: string, format: date-time }
         lastSeen: { type: string, format: date-time }
+
+    Maintainer:
+      type: object
+      description: |
+        One (email, name, username) tuple from a registry's maintainer
+        list. Fields are individually optional — npm guarantees email +
+        name; some legacy registry responses only carry username.
+      properties:
+        email: { type: string }
+        name: { type: string }
+        username: { type: string }
+
+    PublisherSnapshot:
+      type: object
+      description: |
+        Point-in-time view of a single package's publisher metadata.
+        Theme F1 ingests these from npm + GitHub APIs; Theme F2
+        detectors diff successive snapshots to raise PublisherSignals.
+      required: [id, packageRef, snapshotAt]
+      properties:
+        id: { type: integer, format: int64 }
+        packageRef:
+          type: string
+          description: |
+            `<ecosystem>:<name>` — e.g. `npm:axios`,
+            `gomod:github.com/spf13/cobra`, `cargo:tokio`. The colon
+            prefix matches the ecosystem field SBOM parsers emit on
+            PackageVersion, so a snapshot row maps cleanly back to any
+            SBOM entry.
+          example: 'npm:axios'
+        snapshotAt: { type: string, format: date-time }
+        maintainers:
+          type: array
+          items: { $ref: '#/components/schemas/Maintainer' }
+        latestVersion: { type: string }
+        latestVersionPublishedAt: { type: string, format: date-time }
+        publishMethod:
+          type: string
+          description: |
+            How the latest version reached the registry. `oidc-trusted-publisher`
+            indicates a sigstore-validated trusted publisher (currently npm-only);
+            `token` indicates a regular auth token; `unknown` is the default when
+            the upstream API does not surface enough signal to decide.
+          enum: [oidc-trusted-publisher, token, unknown]
+        sourceRepoURL:
+          type: string
+          description: |
+            Canonical https URL for the package's source repository, when
+            the registry's metadata exposes one.
+        # rawData (raw upstream API payload) is intentionally NOT exposed
+        # over HTTP — it stays in the postgres column for Theme F2
+        # detectors to read directly from storage. Keeping it off the
+        # wire avoids leaking arbitrary upstream payload shapes to API
+        # consumers and simplifies the OpenAPI schema.
+
+    PublisherHistory:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/PublisherSnapshot' }
 
     PublisherSignal:
       type: object

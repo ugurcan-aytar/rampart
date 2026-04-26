@@ -239,6 +239,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/publisher/{packageRef}/history": {
+        parameters: {
+            query?: {
+                /** @description Cap on returned snapshots; default 100, max 500. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description `<ecosystem>:<name>` — e.g. `npm:axios`, `gomod:github.com/spf13/cobra`,
+                 *     `cargo:tokio`. Slashes inside the ecosystem-specific name segment
+                 *     must be URL-encoded by the client (`%2F`).
+                 * @example npm:axios
+                 */
+                packageRef: string;
+            };
+            cookie?: never;
+        };
+        /** Newest-first list of publisher snapshots for a package. */
+        get: operations["GetPublisherHistory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/stream": {
         parameters: {
             query?: never;
@@ -450,6 +478,56 @@ export interface components {
             firstSeen?: string;
             /** Format: date-time */
             lastSeen?: string;
+        };
+        /**
+         * @description One (email, name, username) tuple from a registry's maintainer
+         *     list. Fields are individually optional — npm guarantees email +
+         *     name; some legacy registry responses only carry username.
+         */
+        Maintainer: {
+            email?: string;
+            name?: string;
+            username?: string;
+        };
+        /**
+         * @description Point-in-time view of a single package's publisher metadata.
+         *     Theme F1 ingests these from npm + GitHub APIs; Theme F2
+         *     detectors diff successive snapshots to raise PublisherSignals.
+         */
+        PublisherSnapshot: {
+            /** Format: int64 */
+            id: number;
+            /**
+             * @description `<ecosystem>:<name>` — e.g. `npm:axios`,
+             *     `gomod:github.com/spf13/cobra`, `cargo:tokio`. The colon
+             *     prefix matches the ecosystem field SBOM parsers emit on
+             *     PackageVersion, so a snapshot row maps cleanly back to any
+             *     SBOM entry.
+             * @example npm:axios
+             */
+            packageRef: string;
+            /** Format: date-time */
+            snapshotAt: string;
+            maintainers?: components["schemas"]["Maintainer"][];
+            latestVersion?: string;
+            /** Format: date-time */
+            latestVersionPublishedAt?: string;
+            /**
+             * @description How the latest version reached the registry. `oidc-trusted-publisher`
+             *     indicates a sigstore-validated trusted publisher (currently npm-only);
+             *     `token` indicates a regular auth token; `unknown` is the default when
+             *     the upstream API does not surface enough signal to decide.
+             * @enum {string}
+             */
+            publishMethod?: "oidc-trusted-publisher" | "token" | "unknown";
+            /**
+             * @description Canonical https URL for the package's source repository, when
+             *     the registry's metadata exposes one.
+             */
+            sourceRepoURL?: string;
+        };
+        PublisherHistory: {
+            items: components["schemas"]["PublisherSnapshot"][];
         };
         PublisherSignal: {
             /**
@@ -1038,6 +1116,38 @@ export interface operations {
                     "application/json": components["schemas"]["BlastRadiusResponse"];
                 };
             };
+        };
+    };
+    GetPublisherHistory: {
+        parameters: {
+            query?: {
+                /** @description Cap on returned snapshots; default 100, max 500. */
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                /**
+                 * @description `<ecosystem>:<name>` — e.g. `npm:axios`, `gomod:github.com/spf13/cobra`,
+                 *     `cargo:tokio`. Slashes inside the ecosystem-specific name segment
+                 *     must be URL-encoded by the client (`%2F`).
+                 * @example npm:axios
+                 */
+                packageRef: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Snapshot history (possibly empty). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublisherHistory"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
         };
     };
     Stream: {

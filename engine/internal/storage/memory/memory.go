@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
@@ -21,6 +22,12 @@ type Store struct {
 	incidents  map[string]domain.Incident
 	publishers map[publisherKey]domain.Publisher
 	profiles   map[publisherKey]domain.PublisherProfile
+
+	// publisherHistory is keyed by package_ref and holds an
+	// append-only time-series. nextSnapshotID mirrors the postgres
+	// BIGSERIAL so contract tests see the same monotonic-id semantics.
+	publisherHistory map[string][]domain.PublisherSnapshot
+	nextSnapshotID   int64
 }
 
 type publisherKey struct {
@@ -30,12 +37,13 @@ type publisherKey struct {
 
 func New() *Store {
 	return &Store{
-		components: map[string]domain.Component{},
-		sboms:      map[string]domain.SBOM{},
-		iocs:       map[string]domain.IoC{},
-		incidents:  map[string]domain.Incident{},
-		publishers: map[publisherKey]domain.Publisher{},
-		profiles:   map[publisherKey]domain.PublisherProfile{},
+		components:       map[string]domain.Component{},
+		sboms:            map[string]domain.SBOM{},
+		iocs:             map[string]domain.IoC{},
+		incidents:        map[string]domain.Incident{},
+		publishers:       map[publisherKey]domain.Publisher{},
+		profiles:         map[publisherKey]domain.PublisherProfile{},
+		publisherHistory: map[string][]domain.PublisherSnapshot{},
 	}
 }
 
@@ -233,6 +241,82 @@ func (s *Store) ListPublishers(ctx context.Context, ecosystem string) ([]domain.
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, ctx.Err()
+}
+
+// --- PublisherSnapshot --------------------------------------------------
+
+func (s *Store) SavePublisherSnapshot(ctx context.Context, snap domain.PublisherSnapshot) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextSnapshotID++
+	snap.ID = s.nextSnapshotID
+	if snap.SnapshotAt.IsZero() {
+		snap.SnapshotAt = time.Now().UTC()
+	} else {
+		snap.SnapshotAt = snap.SnapshotAt.UTC()
+	}
+	if snap.LatestVersionPublishedAt != nil {
+		t := snap.LatestVersionPublishedAt.UTC()
+		snap.LatestVersionPublishedAt = &t
+	}
+	s.publisherHistory[snap.PackageRef] = append(s.publisherHistory[snap.PackageRef], snap)
+	return ctx.Err()
+}
+
+func (s *Store) GetPublisherHistory(ctx context.Context, packageRef string, limit int) ([]domain.PublisherSnapshot, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	all, ok := s.publisherHistory[packageRef]
+	if !ok {
+		return []domain.PublisherSnapshot{}, ctx.Err()
+	}
+	// Copy + sort newest-first; matches the postgres ORDER BY snapshot_at DESC.
+	out := make([]domain.PublisherSnapshot, len(all))
+	copy(out, all)
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].SnapshotAt.After(out[j].SnapshotAt)
+	})
+	if limit > 0 && limit < len(out) {
+		out = out[:limit]
+	}
+	return out, ctx.Err()
+}
+
+func (s *Store) ListPackagesNeedingRefresh(ctx context.Context, olderThan time.Time, limit int) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	type cand struct {
+		ref    string
+		latest time.Time
+	}
+	cands := make([]cand, 0, len(s.publisherHistory))
+	for ref, hist := range s.publisherHistory {
+		if len(hist) == 0 {
+			continue
+		}
+		latest := hist[0].SnapshotAt
+		for _, sn := range hist[1:] {
+			if sn.SnapshotAt.After(latest) {
+				latest = sn.SnapshotAt
+			}
+		}
+		if latest.Before(olderThan) {
+			cands = append(cands, cand{ref: ref, latest: latest})
+		}
+	}
+	// Stale-first ordering. Postgres returns the same shape with an
+	// ORDER BY MAX(snapshot_at) ASC.
+	sort.Slice(cands, func(i, j int) bool {
+		return cands[i].latest.Before(cands[j].latest)
+	})
+	out := make([]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, c.ref)
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+	}
 	return out, ctx.Err()
 }
 

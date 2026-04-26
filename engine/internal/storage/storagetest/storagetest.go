@@ -24,6 +24,7 @@ func Run(t *testing.T, newStore func() storage.Storage) {
 	t.Run("Incident", func(t *testing.T) { testIncident(t, newStore) })
 	t.Run("Remediation", func(t *testing.T) { testRemediation(t, newStore) })
 	t.Run("Publisher", func(t *testing.T) { testPublisher(t, newStore) })
+	t.Run("PublisherSnapshot", func(t *testing.T) { testPublisherSnapshot(t, newStore) })
 }
 
 func testComponent(t *testing.T, newStore func() storage.Storage) {
@@ -240,4 +241,91 @@ func testPublisher(t *testing.T, newStore func() storage.Storage) {
 
 	_, err = s.GetPublisherProfile(ctx, "npm", "missing")
 	require.True(t, errors.Is(err, storage.ErrNotFound))
+}
+
+func testPublisherSnapshot(t *testing.T, newStore func() storage.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	s := newStore()
+	defer s.Close()
+
+	now := time.Now().UTC()
+	older := now.Add(-2 * time.Hour)
+	older2 := now.Add(-90 * time.Minute)
+
+	pubAt := now.Add(-30 * 24 * time.Hour)
+	url := "https://github.com/axios/axios"
+	axiosOlder := domain.PublisherSnapshot{
+		PackageRef: "npm:axios",
+		SnapshotAt: older,
+		Maintainers: []domain.Maintainer{
+			{Email: "a@example.com", Name: "Maintainer A", Username: "maint-a"},
+		},
+		LatestVersion:            "1.10.0",
+		LatestVersionPublishedAt: &pubAt,
+		PublishMethod:            "token",
+		SourceRepoURL:            &url,
+		RawData:                  []byte(`{"name":"axios"}`),
+	}
+	axiosNewer := axiosOlder
+	axiosNewer.SnapshotAt = now
+	axiosNewer.LatestVersion = "1.11.0"
+	axiosNewer.PublishMethod = "oidc-trusted-publisher"
+
+	// Save older first so the natural insertion order does NOT match
+	// the contract's newest-first read order — forces the backend to
+	// actually sort by snapshot_at DESC rather than rely on insertion.
+	require.NoError(t, s.SavePublisherSnapshot(ctx, axiosOlder))
+	require.NoError(t, s.SavePublisherSnapshot(ctx, axiosNewer))
+
+	hist, err := s.GetPublisherHistory(ctx, "npm:axios", 0)
+	require.NoError(t, err)
+	require.Len(t, hist, 2, "history must contain both snapshots")
+	require.True(t, hist[0].SnapshotAt.After(hist[1].SnapshotAt),
+		"GetPublisherHistory must return newest-first")
+	require.Equal(t, "1.11.0", hist[0].LatestVersion)
+	require.Equal(t, "oidc-trusted-publisher", hist[0].PublishMethod)
+	require.Equal(t, "Maintainer A", hist[0].Maintainers[0].Name)
+	require.NotNil(t, hist[0].SourceRepoURL)
+	require.Equal(t, url, *hist[0].SourceRepoURL)
+	require.NotZero(t, hist[0].ID, "ID must be assigned by the store")
+	require.NotEqual(t, hist[0].ID, hist[1].ID, "snapshot IDs must be distinct")
+
+	// Limit caps the result without re-ordering.
+	limited, err := s.GetPublisherHistory(ctx, "npm:axios", 1)
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
+	require.Equal(t, "1.11.0", limited[0].LatestVersion)
+
+	// Unknown package_ref returns empty, not ErrNotFound.
+	miss, err := s.GetPublisherHistory(ctx, "npm:unknown-pkg", 0)
+	require.NoError(t, err)
+	require.Empty(t, miss)
+
+	// ListPackagesNeedingRefresh — a second package whose only snapshot
+	// is between older and now should NOT show up when threshold is
+	// older2 (between older and now).
+	cargoSnap := domain.PublisherSnapshot{
+		PackageRef: "cargo:tokio",
+		SnapshotAt: now,
+	}
+	require.NoError(t, s.SavePublisherSnapshot(ctx, cargoSnap))
+
+	stale, err := s.ListPackagesNeedingRefresh(ctx, older2, 0)
+	require.NoError(t, err)
+	// axios's MAX(snapshot_at) is `now` (newer than older2 → not stale).
+	// Wait — axios's MAX is `now`, cargo's MAX is `now`. Neither is
+	// older than older2; expect empty.
+	require.Empty(t, stale,
+		"no package's latest snapshot is older than the threshold")
+
+	// Bump the threshold past `now` so both packages are stale.
+	stale2, err := s.ListPackagesNeedingRefresh(ctx, now.Add(time.Minute), 0)
+	require.NoError(t, err)
+	require.Len(t, stale2, 2)
+
+	// Limit honoured.
+	stale3, err := s.ListPackagesNeedingRefresh(ctx, now.Add(time.Minute), 1)
+	require.NoError(t, err)
+	require.Len(t, stale3, 1)
 }
