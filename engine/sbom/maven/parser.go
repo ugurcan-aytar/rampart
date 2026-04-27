@@ -47,8 +47,8 @@ var ErrMalformedLockfile = errors.New("malformed lockfile")
 type Format string
 
 const (
-	FormatPom    Format = "pom"           // pom.xml
-	FormatGradle Format = "gradle-lock"   // gradle.lockfile
+	FormatPom    Format = "pom"         // pom.xml
+	FormatGradle Format = "gradle-lock" // gradle.lockfile
 )
 
 // Parser is stateless and safe for concurrent use.
