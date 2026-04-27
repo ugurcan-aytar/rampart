@@ -13,6 +13,7 @@ export { BlastRadius } from './components/BlastRadius';
 export { BlastRadiusGraph } from './components/BlastRadiusGraph';
 export { ComponentCard } from './components/ComponentCard';
 export { IncidentDashboardToolbar } from './components/IncidentDashboardToolbar';
+export { PublisherAnomalyPanel } from './components/PublisherAnomalyPanel';
 
 export { rampartApiRef, RampartClient } from './api';
 export type { RampartApi, StreamEvent } from './api';

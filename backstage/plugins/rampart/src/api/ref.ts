@@ -4,6 +4,7 @@ import type { components } from './gen/schema';
 
 type Incident = components['schemas']['Incident'];
 type IncidentDetail = components['schemas']['IncidentDetail'];
+type PublisherSnapshot = components['schemas']['PublisherSnapshot'];
 type SBOM = components['schemas']['SBOM'];
 
 export type StreamEvent =
@@ -39,6 +40,13 @@ export type RampartApi = {
    * drawer-open path stays under the 200ms budget.
    */
   getIncidentDetail(id: string): Promise<IncidentDetail>;
+  /**
+   * getPublisherHistory returns the snapshot time-series for a single
+   * package, newest-first. Theme F1 ingests these from npm + GitHub;
+   * Theme F3 PublisherAnomalyPanel reads them to render maintainer /
+   * cadence / OIDC charts.
+   */
+  getPublisherHistory(packageRef: string, limit?: number): Promise<PublisherSnapshot[]>;
   listSBOMsForComponent(componentRef: string): Promise<SBOM[]>;
   subscribeToStream(handler: (event: StreamEvent) => void): () => void;
 };

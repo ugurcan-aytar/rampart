@@ -34,7 +34,8 @@
     "@mui/icons-material": "^9.0.0",
     "@mui/material": "^9.0.0",
     "dagre": "0.8.5",
-    "reactflow": "11.11.4"
+    "reactflow": "11.11.4",
+    "recharts": "3.8.1"
   },
   "peerDependencies": {
     "react": "^18.3.1",

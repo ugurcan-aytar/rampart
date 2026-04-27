@@ -4,6 +4,8 @@ import type { IncidentListFilter, RampartApi, StreamEvent } from './ref';
 type Incident = components['schemas']['Incident'];
 type IncidentDetail = components['schemas']['IncidentDetail'];
 type IncidentPage = components['schemas']['IncidentPage'];
+type PublisherHistory = components['schemas']['PublisherHistory'];
+type PublisherSnapshot = components['schemas']['PublisherSnapshot'];
 type SBOM = components['schemas']['SBOM'];
 
 const STREAM_EVENT_TYPES = [
@@ -101,6 +103,18 @@ export class RampartClient implements RampartApi {
       throw new Error(`rampart: getIncidentDetail ${res.status}`);
     }
     return (await res.json()) as IncidentDetail;
+  }
+
+  async getPublisherHistory(packageRef: string, limit?: number): Promise<PublisherSnapshot[]> {
+    const base = await this.discovery.getBaseUrl('rampart');
+    const qs = limit !== undefined ? `?limit=${limit}` : '';
+    const path = `${base}/v1/publisher/${encodeURIComponent(packageRef)}/history${qs}`;
+    const res = await this.fetchApi.fetch(path);
+    if (!res.ok) {
+      throw new Error(`rampart: getPublisherHistory ${res.status}`);
+    }
+    const page = (await res.json()) as PublisherHistory;
+    return page.items;
   }
 
   async listSBOMsForComponent(componentRef: string): Promise<SBOM[]> {

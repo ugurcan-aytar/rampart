@@ -19,6 +19,7 @@ import { useApi } from '@backstage/core-plugin-api';
 
 import { rampartApiRef } from '../../api';
 import { BlastRadiusGraph } from '../BlastRadiusGraph';
+import { PublisherAnomalyPanel } from '../PublisherAnomalyPanel';
 import type { components } from '../../api/gen/schema';
 
 type IncidentDetail = components['schemas']['IncidentDetail'];
@@ -80,7 +81,12 @@ function iocBodyOf(ioc: IoC): unknown {
 
 /** IoCPanel renders the matched IoC: kind, ecosystem, severity, plus a
  *  collapsible JSON dump of the body. Empty when the IoC has been deleted
- *  after the incident opened (engine returns 200 with omitted `ioc`). */
+ *  after the incident opened (engine returns 200 with omitted `ioc`).
+ *
+ *  When the IoC carries the `anomalyBody` variant (Theme F3 IoC bridge,
+ *  ADR-0014), the body slot is replaced by PublisherAnomalyPanel which
+ *  fetches `/v1/publisher/{ref}/history` and renders the maintainer /
+ *  cadence / OIDC charts inline. */
 const IoCPanel = ({ detail }: { detail: IncidentDetail }) => {
   if (!detail.ioc) {
     return (
@@ -93,6 +99,7 @@ const IoCPanel = ({ detail }: { detail: IncidentDetail }) => {
     );
   }
   const ioc = detail.ioc;
+  const isAnomalyVariant = Boolean(ioc.anomalyBody);
   return (
     <Box data-testid="panel-ioc">
       <Typography variant="subtitle1">Matched IoC</Typography>
@@ -113,14 +120,18 @@ const IoCPanel = ({ detail }: { detail: IncidentDetail }) => {
           <ListItemText primary="Source" secondary={ioc.source ?? '—'} />
         </ListItem>
       </List>
-      <details>
-        <summary>
-          <Typography variant="caption" component="span">Body (raw JSON)</Typography>
-        </summary>
-        <pre style={{ fontSize: 12, overflow: 'auto', maxHeight: 200 }}>
-          {JSON.stringify(iocBodyOf(ioc), null, 2)}
-        </pre>
-      </details>
+      {isAnomalyVariant ? (
+        <PublisherAnomalyPanel ioc={ioc} />
+      ) : (
+        <details>
+          <summary>
+            <Typography variant="caption" component="span">Body (raw JSON)</Typography>
+          </summary>
+          <pre style={{ fontSize: 12, overflow: 'auto', maxHeight: 200 }}>
+            {JSON.stringify(iocBodyOf(ioc), null, 2)}
+          </pre>
+        </details>
+      )}
     </Box>
   );
 };
