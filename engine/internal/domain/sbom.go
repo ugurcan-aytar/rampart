@@ -28,3 +28,16 @@ type SBOM struct {
 	SourceFormat string
 	SourceBytes  int64
 }
+
+// SBOMPackageRef pairs a component reference with one of its SBOM
+// packages. It is the row shape returned by Storage.ListSBOMPackages —
+// the bulk-lookup hot path that replaced the matcher's per-component
+// ListSBOMsByComponent loop. The same ComponentRef can appear more
+// than once if multiple historical SBOMs (re-scans) carry the same
+// package, or if a single SBOM lists the same name at multiple
+// versions; callers are expected to dedupe on ComponentRef once
+// matcher.Evaluate has confirmed the version predicate.
+type SBOMPackageRef struct {
+	ComponentRef string
+	Package      PackageVersion
+}

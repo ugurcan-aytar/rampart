@@ -260,6 +260,34 @@ func (s *Store) hydrateSBOMPackages(ctx context.Context, b *domain.SBOM) error {
 	return rows.Err()
 }
 
+func (s *Store) ListSBOMPackages(ctx context.Context, ecosystem, name string) ([]domain.SBOMPackageRef, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT s.component_ref, sp.ecosystem, sp.name, sp.version, sp.purl, sp.scope, sp.integrity
+		FROM sbom_packages sp
+		JOIN sboms s ON s.id = sp.sbom_id
+		WHERE sp.ecosystem = $1 AND sp.name = $2
+		ORDER BY s.component_ref, sp.version`, ecosystem, name)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: ListSBOMPackages: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.SBOMPackageRef{}
+	for rows.Next() {
+		var ref domain.SBOMPackageRef
+		var scope []string
+		if err := rows.Scan(
+			&ref.ComponentRef,
+			&ref.Package.Ecosystem, &ref.Package.Name, &ref.Package.Version,
+			&ref.Package.PURL, &scope, &ref.Package.Integrity,
+		); err != nil {
+			return nil, err
+		}
+		ref.Package.Scope = scope
+		out = append(out, ref)
+	}
+	return out, rows.Err()
+}
+
 // --- IoC -------------------------------------------------------------------
 
 // iocBody captures the tagged-union payload. Exactly one of the three
@@ -413,6 +441,27 @@ func (s *Store) ListIncidents(ctx context.Context) ([]domain.Incident, error) {
 			return nil, err
 		}
 		out = append(out, *i)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) MatchedComponentRefsByIoC(ctx context.Context, iocID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT DISTINCT u.ref
+		FROM incidents i, unnest(i.affected_components_snapshot) AS u(ref)
+		WHERE i.ioc_id = $1
+		ORDER BY u.ref`, iocID)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: MatchedComponentRefsByIoC: %w", err)
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var ref string
+		if err := rows.Scan(&ref); err != nil {
+			return nil, err
+		}
+		out = append(out, ref)
 	}
 	return out, rows.Err()
 }
