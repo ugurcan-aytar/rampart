@@ -56,4 +56,28 @@ describe('RampartClient', () => {
       'http://backstage.test/api/rampart/v1/components/kind%3AComponent%2Fdefault%2Fweb-app/sboms',
     );
   });
+
+  it('hits the joined detail endpoint with an encoded id', async () => {
+    const discovery = mkDiscovery('http://backstage.test/api/rampart');
+    const fetchApi = mkFetch({
+      ok: true,
+      json: async () => ({
+        incident: { id: 'inc-42', state: 'pending', iocId: 'ioc-1', openedAt: 't', lastTransitionedAt: 't' },
+        affectedComponents: [],
+      }),
+    });
+    const client = new RampartClient(discovery, fetchApi);
+    const detail = await client.getIncidentDetail('inc-42');
+    expect(fetchApi.fetch).toHaveBeenCalledWith(
+      'http://backstage.test/api/rampart/v1/incidents/inc-42/detail',
+    );
+    expect(detail.incident.id).toBe('inc-42');
+  });
+
+  it('surfaces 404 from getIncidentDetail as a thrown error', async () => {
+    const discovery = mkDiscovery('http://backstage.test/api/rampart');
+    const fetchApi = mkFetch({ ok: false, status: 404 });
+    const client = new RampartClient(discovery, fetchApi);
+    await expect(client.getIncidentDetail('nope')).rejects.toThrow(/getIncidentDetail 404/);
+  });
 });

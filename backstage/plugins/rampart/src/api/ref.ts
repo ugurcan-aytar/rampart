@@ -3,6 +3,7 @@ import { createApiRef } from '@backstage/core-plugin-api';
 import type { components } from './gen/schema';
 
 type Incident = components['schemas']['Incident'];
+type IncidentDetail = components['schemas']['IncidentDetail'];
 type SBOM = components['schemas']['SBOM'];
 
 export type StreamEvent =
@@ -15,6 +16,13 @@ export type StreamEvent =
 export type RampartApi = {
   listIncidents(): Promise<Incident[]>;
   getIncident(id: string): Promise<Incident>;
+  /**
+   * getIncidentDetail returns the joined view used by IncidentDetailDrawer:
+   * incident + matched IoC + every affected component hydrated. Single
+   * round-trip — the engine resolves the joins in one handler call so the
+   * drawer-open path stays under the 200ms budget.
+   */
+  getIncidentDetail(id: string): Promise<IncidentDetail>;
   listSBOMsForComponent(componentRef: string): Promise<SBOM[]>;
   subscribeToStream(handler: (event: StreamEvent) => void): () => void;
 };

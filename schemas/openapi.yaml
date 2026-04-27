@@ -262,6 +262,30 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/IncidentPage' }
 
+  /v1/incidents/{id}/detail:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [incidents]
+      operationId: GetIncidentDetail
+      summary: Joined incident view (incident + IoC + affected components + remediations).
+      description: |
+        Backs the IncidentDetailDrawer in the Backstage frontend — a
+        single round-trip avoids the N+1 the drawer would otherwise need
+        across `GET /v1/incidents/{id}`, `GET /v1/iocs/{iocId}`, and one
+        `GET /v1/components/{ref}` per affected component. Returns 404
+        when the incident does not exist.
+      responses:
+        '200':
+          description: Joined incident detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/incidents/{id}:
     parameters:
       - name: id
@@ -923,6 +947,30 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Incident' }
         nextCursor: { type: string }
+
+    IncidentDetail:
+      type: object
+      description: |
+        Joined view used by the IncidentDetailDrawer: the incident itself,
+        the IoC that opened it, and the hydrated component records for
+        every entry in `affectedComponentsSnapshot`. Remediations live on
+        the embedded `incident` (append-only). When an affected component
+        ref no longer resolves (catalog deletion after the incident
+        opened), it is silently dropped from `affectedComponents` rather
+        than 404-ing the whole detail call — incident history must
+        survive catalog churn.
+      required: [incident]
+      properties:
+        incident: { $ref: '#/components/schemas/Incident' }
+        ioc:
+          description: |
+            The IoC that triggered the incident. Omitted when the IoC
+            no longer resolves (e.g. deleted after the incident opened);
+            we surface what we can rather than 404 the whole detail.
+          $ref: '#/components/schemas/IoC'
+        affectedComponents:
+          type: array
+          items: { $ref: '#/components/schemas/Component' }
 
     IncidentTransitionRequest:
       type: object

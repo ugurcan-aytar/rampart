@@ -156,6 +156,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/incidents/{id}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Joined incident view (incident + IoC + affected components + remediations).
+         * @description Backs the IncidentDetailDrawer in the Backstage frontend — a
+         *     single round-trip avoids the N+1 the drawer would otherwise need
+         *     across `GET /v1/incidents/{id}`, `GET /v1/iocs/{iocId}`, and one
+         *     `GET /v1/components/{ref}` per affected component. Returns 404
+         *     when the incident does not exist.
+         */
+        get: operations["GetIncidentDetail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/incidents/{id}": {
         parameters: {
             query?: never;
@@ -633,6 +659,26 @@ export interface components {
             items: components["schemas"]["Incident"][];
             nextCursor?: string;
         };
+        /**
+         * @description Joined view used by the IncidentDetailDrawer: the incident itself,
+         *     the IoC that opened it, and the hydrated component records for
+         *     every entry in `affectedComponentsSnapshot`. Remediations live on
+         *     the embedded `incident` (append-only). When an affected component
+         *     ref no longer resolves (catalog deletion after the incident
+         *     opened), it is silently dropped from `affectedComponents` rather
+         *     than 404-ing the whole detail call — incident history must
+         *     survive catalog churn.
+         */
+        IncidentDetail: {
+            incident: components["schemas"]["Incident"];
+            /**
+             * @description The IoC that triggered the incident. Omitted when the IoC
+             *     no longer resolves (e.g. deleted after the incident opened);
+             *     we surface what we can rather than 404 the whole detail.
+             */
+            ioc?: components["schemas"]["IoC"];
+            affectedComponents?: components["schemas"]["Component"][];
+        };
         IncidentTransitionRequest: {
             to: components["schemas"]["IncidentState"];
             /** @example team:platform */
@@ -1067,6 +1113,29 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentPage"];
                 };
             };
+        };
+    };
+    GetIncidentDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Joined incident detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     GetIncident: {

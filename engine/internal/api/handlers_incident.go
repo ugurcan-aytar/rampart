@@ -74,6 +74,62 @@ func (s *Server) GetIncident(w http.ResponseWriter, r *http.Request, id string) 
 	writeJSON(w, http.StatusOK, toGenIncident(*inc))
 }
 
+// GetIncidentDetail backs the IncidentDetailDrawer in the Backstage
+// frontend with a single round-trip: the incident row + its IoC + every
+// component referenced by AffectedComponentsSnapshot, all hydrated.
+// Remediations are already part of the Incident value (append-only on
+// the same row), so no separate ListRemediations call is needed.
+//
+// Performance posture: 4-N storage calls (1 GetIncident + 1 GetIoC + N
+// GetComponent for N affected components). Memory backend keeps these
+// under a millisecond; postgres pool services them serially in a single
+// HTTP request — well inside the <200ms drawer-open budget for typical
+// incidents (≤10 components). N+1 across thousands of components would
+// need a denormalised view; not the v0.2.0 traffic shape.
+//
+// Failure-mode discipline: missing IoC or missing component refs no
+// longer 404 the whole detail call (incident history must survive
+// catalog churn). The IoC field is omitted when the IoC has been
+// deleted; affected components silently drop deleted refs.
+func (s *Server) GetIncidentDetail(w http.ResponseWriter, r *http.Request, id string) {
+	inc, err := s.storage.GetIncident(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "INCIDENT_NOT_FOUND", "incident "+id+" not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
+		return
+	}
+
+	out := gen.IncidentDetail{
+		Incident:           toGenIncident(*inc),
+		AffectedComponents: &[]gen.Component{},
+	}
+
+	if inc.IoCID != "" {
+		ioc, err := s.storage.GetIoC(r.Context(), inc.IoCID)
+		if err == nil && ioc != nil {
+			gioc := toGenIoC(*ioc)
+			out.Ioc = &gioc
+		}
+	}
+
+	if len(inc.AffectedComponentsSnapshot) > 0 {
+		hydrated := make([]gen.Component, 0, len(inc.AffectedComponentsSnapshot))
+		for _, ref := range inc.AffectedComponentsSnapshot {
+			c, err := s.storage.GetComponent(r.Context(), ref)
+			if err != nil || c == nil {
+				continue
+			}
+			hydrated = append(hydrated, toGenComponent(*c))
+		}
+		out.AffectedComponents = &hydrated
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
 // TransitionIncident advances an incident's state machine. Calls through
 // to domain.Incident.Transition; invalid transitions return 409 with
 // the domain's error message so operators see "pending → closed is not

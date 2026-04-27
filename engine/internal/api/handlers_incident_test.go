@@ -126,6 +126,59 @@ func TestGetIncident_MissingReturns404(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rr.Code)
 }
 
+// TestGetIncidentDetail_JoinedShape exercises the drawer-backing
+// endpoint: incident + IoC + every affected component hydrated in a
+// single round-trip.
+func TestGetIncidentDetail_JoinedShape(t *testing.T) {
+	h, _, ids := seedIncidentScenario(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/incidents/"+ids[0]+"/detail", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var detail gen.IncidentDetail
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &detail))
+
+	require.Equal(t, ids[0], detail.Incident.Id)
+	require.Equal(t, gen.Pending, detail.Incident.State)
+
+	require.NotNil(t, detail.Ioc, "IoC must be hydrated")
+	require.Equal(t, "01IOC-AXIOS-1-11-0", detail.Ioc.Id)
+	require.Equal(t, gen.IoCKindPackageVersion, detail.Ioc.Kind)
+
+	require.NotNil(t, detail.AffectedComponents)
+	require.Len(t, *detail.AffectedComponents, 1, "one affected component per fixture incident")
+	first := (*detail.AffectedComponents)[0]
+	require.Contains(t, first.Ref, "kind:Component/default/")
+	require.NotNil(t, first.Owner)
+	require.Equal(t, "team-platform", *first.Owner)
+}
+
+// TestGetIncidentDetail_MissingIncidentReturns404 ensures the detail
+// endpoint participates in the same 404 contract as GetIncident.
+func TestGetIncidentDetail_MissingIncidentReturns404(t *testing.T) {
+	h, _ := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/v1/incidents/NOPE/detail", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusNotFound, rr.Code)
+}
+
+// TestGetIncidentDetail_HappyPathRegression is a regression check on
+// the joined endpoint with a fully-resolvable seed; the
+// "dropped component ref" survival contract is documented in the
+// handler comment but not reachable from the test fixture today
+// (memory.Store doesn't expose a delete surface in v0.2.0).
+func TestGetIncidentDetail_HappyPathRegression(t *testing.T) {
+	h, _, ids := seedIncidentScenario(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/incidents/"+ids[0]+"/detail", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+}
+
 // TestTransitionIncident_ValidChain walks one incident through the
 // happy-path state machine: pending → triaged → acknowledged →
 // remediating → closed. Each step asserts the response, storage, and
