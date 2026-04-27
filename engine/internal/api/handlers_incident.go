@@ -8,7 +8,6 @@ import (
 
 	"github.com/ugurcan-aytar/rampart/engine/api/gen"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
-	"github.com/ugurcan-aytar/rampart/engine/internal/matcher"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 )
 
@@ -194,9 +193,22 @@ func (s *Server) TransitionIncident(w http.ResponseWriter, r *http.Request, id s
 }
 
 // BlastRadius answers "given these IoCs, which components are affected?"
-// without opening incidents. Useful for what-if analysis: "a new IoC for
-// axios@1.12.0 is about to land — who pages out?" Phase 1 does an O(IoCs
-// × SBOMs) scan; Phase 2's bitmap index turns this into O(|components|).
+// without opening incidents. Hybrid lookup:
+//
+//   - Cache path: an IoC already ingested into the engine has rows in
+//     the incidents table for every (IoC, component) pair the matcher
+//     fired on at submit time. We just SELECT them out — single
+//     indexed query, no live re-scan.
+//   - Live path: an IoC the caller is asking about hypothetically
+//     ("what if axios@1.12.0 dropped right now?") has no incidents.
+//     We fall back to a single bulk lookup over sbom_packages by
+//     (ecosystem, name) and run matcher.Evaluate over the
+//     candidates.
+//
+// Both paths produce the same response shape. The what-if contract is
+// covered by TestBlastRadius_ReturnsAffectedComponents (hypothetical
+// IoC ID 01IOC-HYPO); the cache path by
+// TestBlastRadius_CachedPathForIngestedIoC.
 func (s *Server) BlastRadius(w http.ResponseWriter, r *http.Request) {
 	var body gen.BlastRadiusRequest
 	if err := decodeJSON(r, &body); err != nil {
@@ -208,12 +220,7 @@ func (s *Server) BlastRadius(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	comps, err := s.storage.ListComponents(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
-		return
-	}
-
+	ctx := r.Context()
 	affected := map[string]struct{}{}
 	for _, genIoC := range body.Iocs {
 		ioc := fromGenIoC(genIoC)
@@ -221,18 +228,43 @@ func (s *Server) BlastRadius(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "INVALID_IOC", err.Error())
 			return
 		}
-		for _, c := range comps {
-			sboms, err := s.storage.ListSBOMsByComponent(r.Context(), c.Ref)
+
+		// Cache-first: was this IoC already ingested? GetIoC
+		// distinguishes a real storage error from a "never seen"
+		// miss via storage.ErrNotFound.
+		_, err := s.storage.GetIoC(ctx, ioc.ID)
+		switch {
+		case err == nil:
+			refs, err := s.storage.MatchedComponentRefsByIoC(ctx, ioc.ID)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 				return
 			}
-			for _, sbom := range sboms {
-				if matcher.Evaluate(ioc, sbom).Matched {
-					affected[c.Ref] = struct{}{}
-					break
-				}
+			for _, ref := range refs {
+				affected[ref] = struct{}{}
 			}
+			continue
+		case errors.Is(err, storage.ErrNotFound):
+			// Fall through to live path.
+		default:
+			writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
+			return
+		}
+
+		// Live path (hypothetical IoC).
+		eco, name, ok := iocLookupKey(ioc)
+		if !ok {
+			// IoC variant carries no (ecosystem, name) hook — no
+			// candidates to evaluate, contributes nothing.
+			continue
+		}
+		pkgs, err := s.storage.ListSBOMPackages(ctx, eco, name)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
+			return
+		}
+		for _, ref := range matchPackagesAgainstIoC(ioc, eco, pkgs) {
+			affected[ref] = struct{}{}
 		}
 	}
 	out := make([]string, 0, len(affected))

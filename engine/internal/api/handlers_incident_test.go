@@ -396,6 +396,52 @@ func TestBlastRadius_NoIoCs_400(t *testing.T) {
 	require.Equal(t, http.StatusBadRequest, rr.Code)
 }
 
+// TestBlastRadius_CachedPathForIngestedIoC pins the v0.2.1 fast path:
+// when the request carries an IoC ID the engine has already ingested,
+// BlastRadius reads matched component refs straight out of the
+// incidents table (storage.MatchedComponentRefsByIoC) instead of
+// re-running the matcher across every SBOM.
+//
+// seedIncidentScenario submits IoC `01IOC-AXIOS-1-11-0` (axios@1.11.0)
+// against three components, opening three incidents. We then ask
+// BlastRadius for the same IoC ID but with a deliberately impossible
+// version (`1.99.99`) in the request body — no SBOM in the fixture
+// carries that version, so a live matcher pass would return [].
+// Returning the original three components proves the engine routed
+// the request through the cached lookup keyed on ID, not the live
+// matcher keyed on the body's version predicate.
+func TestBlastRadius_CachedPathForIngestedIoC(t *testing.T) {
+	h, _, _ := seedIncidentScenario(t)
+
+	body, _ := json.Marshal(gen.BlastRadiusRequest{
+		Iocs: []gen.IoC{{
+			Id:          "01IOC-AXIOS-1-11-0", // already ingested at 1.11.0
+			Kind:        gen.IoCKindPackageVersion,
+			Severity:    gen.SeverityCritical,
+			Ecosystem:   "npm",
+			PublishedAt: time.Now().UTC(),
+			PackageVersion: &gen.IoCPackageVersion{
+				// Deliberate mismatch: no SBOM has 1.99.99. A live
+				// matcher would return []; cache returns the snapshot.
+				Name: "axios", Version: "1.99.99", Purl: "pkg:npm/axios@1.99.99",
+			},
+		}},
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/blast-radius", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var resp gen.BlastRadiusResponse
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	require.ElementsMatch(t, resp.AffectedComponentRefs, []string{
+		"kind:Component/default/billing",
+		"kind:Component/default/reporting",
+		"kind:Component/default/web-app",
+	}, "cache path must return the snapshot persisted at IoC submit time")
+}
+
 // transition is a helper for driving /v1/incidents/{id}/transition in tests.
 func transition(t *testing.T, h http.Handler, id string, to domain.IncidentState) {
 	t.Helper()

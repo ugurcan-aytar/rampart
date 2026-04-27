@@ -27,6 +27,8 @@ func Run(t *testing.T, newStore func() storage.Storage) {
 	t.Run("PublisherSnapshot", func(t *testing.T) { testPublisherSnapshot(t, newStore) })
 	t.Run("Anomaly", func(t *testing.T) { testAnomaly(t, newStore) })
 	t.Run("IncidentFilter", func(t *testing.T) { testIncidentFilter(t, newStore) })
+	t.Run("ListSBOMPackages", func(t *testing.T) { testListSBOMPackages(t, newStore) })
+	t.Run("MatchedComponentRefsByIoC", func(t *testing.T) { testMatchedComponentRefsByIoC(t, newStore) })
 }
 
 func testComponent(t *testing.T, newStore func() storage.Storage) {
@@ -520,4 +522,92 @@ func testIncidentFilter(t *testing.T, newStore func() storage.Storage) {
 	limited, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, limited, 1)
+}
+
+func testListSBOMPackages(t *testing.T, newStore func() storage.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	s := newStore()
+	defer s.Close()
+
+	now := time.Now().UTC()
+	webRef := "kind:Component/default/web-app"
+	apiRef := "kind:Component/default/api"
+
+	require.NoError(t, s.UpsertSBOM(ctx, domain.SBOM{
+		ID: "sbom-web", ComponentRef: webRef, Ecosystem: "npm", GeneratedAt: now,
+		Packages: []domain.PackageVersion{
+			{Ecosystem: "npm", Name: "axios", Version: "1.11.0"},
+			{Ecosystem: "npm", Name: "lodash", Version: "4.17.21"},
+		},
+	}))
+	require.NoError(t, s.UpsertSBOM(ctx, domain.SBOM{
+		ID: "sbom-api", ComponentRef: apiRef, Ecosystem: "npm", GeneratedAt: now,
+		Packages: []domain.PackageVersion{
+			{Ecosystem: "npm", Name: "axios", Version: "1.10.0"},
+		},
+	}))
+	// Same component, different ecosystem — must not match an npm lookup.
+	require.NoError(t, s.UpsertSBOM(ctx, domain.SBOM{
+		ID: "sbom-api-go", ComponentRef: apiRef, Ecosystem: "gomod", GeneratedAt: now,
+		Packages: []domain.PackageVersion{
+			{Ecosystem: "gomod", Name: "axios", Version: "1.11.0"},
+		},
+	}))
+
+	got, err := s.ListSBOMPackages(ctx, "npm", "axios")
+	require.NoError(t, err)
+	require.Len(t, got, 2, "two npm SBOMs carry axios across two components")
+
+	refs := []string{got[0].ComponentRef, got[1].ComponentRef}
+	require.ElementsMatch(t, []string{webRef, apiRef}, refs)
+	for _, r := range got {
+		require.Equal(t, "npm", r.Package.Ecosystem)
+		require.Equal(t, "axios", r.Package.Name)
+	}
+
+	// Misses produce an empty slice, not nil + error.
+	miss, err := s.ListSBOMPackages(ctx, "npm", "no-such-package")
+	require.NoError(t, err)
+	require.Empty(t, miss)
+}
+
+func testMatchedComponentRefsByIoC(t *testing.T, newStore func() storage.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	s := newStore()
+	defer s.Close()
+
+	now := time.Now().UTC()
+	webRef := "kind:Component/default/web-app"
+	apiRef := "kind:Component/default/api"
+	billingRef := "kind:Component/default/billing"
+
+	// Two incidents under the same IoC, one under a different IoC.
+	require.NoError(t, s.UpsertIncident(ctx, domain.Incident{
+		ID: "inc-1", IoCID: "ioc-axios", State: domain.StatePending,
+		OpenedAt: now, LastTransitionedAt: now,
+		AffectedComponentsSnapshot: []string{webRef},
+	}))
+	require.NoError(t, s.UpsertIncident(ctx, domain.Incident{
+		ID: "inc-2", IoCID: "ioc-axios", State: domain.StateClosed,
+		OpenedAt: now, LastTransitionedAt: now,
+		AffectedComponentsSnapshot: []string{apiRef},
+	}))
+	require.NoError(t, s.UpsertIncident(ctx, domain.Incident{
+		ID: "inc-3", IoCID: "ioc-other", State: domain.StatePending,
+		OpenedAt: now, LastTransitionedAt: now,
+		AffectedComponentsSnapshot: []string{billingRef},
+	}))
+
+	got, err := s.MatchedComponentRefsByIoC(ctx, "ioc-axios")
+	require.NoError(t, err)
+	require.Equal(t, []string{apiRef, webRef}, got, "sorted, all states included")
+
+	// Hypothetical (never-ingested) IoC ID returns empty — the
+	// signal callers (BlastRadius live fallback) rely on to switch
+	// to the live matcher path.
+	miss, err := s.MatchedComponentRefsByIoC(ctx, "ioc-never-seen")
+	require.NoError(t, err)
+	require.Empty(t, miss)
 }

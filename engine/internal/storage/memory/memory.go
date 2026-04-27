@@ -126,6 +126,33 @@ func (s *Store) ListSBOMsByComponent(ctx context.Context, ref string) ([]domain.
 	return out, ctx.Err()
 }
 
+func (s *Store) ListSBOMPackages(ctx context.Context, ecosystem, name string) ([]domain.SBOMPackageRef, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := []domain.SBOMPackageRef{}
+	for _, b := range s.sboms {
+		if b.Ecosystem != ecosystem {
+			continue
+		}
+		for _, p := range b.Packages {
+			if p.Name != name {
+				continue
+			}
+			out = append(out, domain.SBOMPackageRef{
+				ComponentRef: b.ComponentRef,
+				Package:      p,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].ComponentRef != out[j].ComponentRef {
+			return out[i].ComponentRef < out[j].ComponentRef
+		}
+		return out[i].Package.Version < out[j].Package.Version
+	})
+	return out, ctx.Err()
+}
+
 func (s *Store) UpsertIoC(ctx context.Context, i domain.IoC) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -181,6 +208,27 @@ func (s *Store) ListIncidents(ctx context.Context) ([]domain.Incident, error) {
 		out = append(out, i)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].OpenedAt.Before(out[j].OpenedAt) })
+	return out, ctx.Err()
+}
+
+func (s *Store) MatchedComponentRefsByIoC(ctx context.Context, iocID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, inc := range s.incidents {
+		if inc.IoCID != iocID {
+			continue
+		}
+		for _, ref := range inc.AffectedComponentsSnapshot {
+			if _, dup := seen[ref]; dup {
+				continue
+			}
+			seen[ref] = struct{}{}
+			out = append(out, ref)
+		}
+	}
+	sort.Strings(out)
 	return out, ctx.Err()
 }
 

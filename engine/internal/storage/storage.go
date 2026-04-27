@@ -24,6 +24,17 @@ type Storage interface {
 	GetSBOM(ctx context.Context, id string) (*domain.SBOM, error)
 	ListSBOMsByComponent(ctx context.Context, ref string) ([]domain.SBOM, error)
 
+	// ListSBOMPackages returns every (component, package) pair where
+	// the package matches (ecosystem, name). Hot path for the matcher:
+	// forwardMatch (one query per IoC) and BlastRadius live fallback
+	// (one query per what-if IoC) both call this instead of looping
+	// ListSBOMsByComponent across every component. Postgres uses the
+	// existing sbom_packages_name_version_idx (ecosystem + name
+	// prefix) for the WHERE; version-constraint matching stays in
+	// matcher.Evaluate so a single storage method serves all three
+	// IoC kinds.
+	ListSBOMPackages(ctx context.Context, ecosystem, name string) ([]domain.SBOMPackageRef, error)
+
 	// IoC
 	UpsertIoC(ctx context.Context, i domain.IoC) error
 	GetIoC(ctx context.Context, id string) (*domain.IoC, error)
@@ -40,6 +51,15 @@ type Storage interface {
 	// and post-filter the cross-table dimensions (Search across joined
 	// IoC ecosystem, Owner across joined Component). Newest-first.
 	ListIncidentsFiltered(ctx context.Context, filter domain.IncidentFilter) ([]domain.Incident, error)
+
+	// MatchedComponentRefsByIoC returns the distinct component refs
+	// the given IoC has ever opened an incident for, across all
+	// incident states (pending → closed). Hot path for the
+	// BlastRadius cached lookup; postgres uses the existing
+	// incidents_ioc_idx. An empty result means either no match or
+	// the IoC was never ingested — callers can fall back to the
+	// live matcher path to preserve what-if semantics.
+	MatchedComponentRefsByIoC(ctx context.Context, iocID string) ([]string, error)
 
 	// Remediation — append-only audit log. Each entry is attached to an
 	// Incident; storage backends are expected to append atomically so
