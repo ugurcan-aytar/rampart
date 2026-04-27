@@ -2,6 +2,7 @@ import type { components } from './gen/schema';
 import type { RampartApi, StreamEvent } from './ref';
 
 type Incident = components['schemas']['Incident'];
+type IncidentDetail = components['schemas']['IncidentDetail'];
 type IncidentPage = components['schemas']['IncidentPage'];
 type SBOM = components['schemas']['SBOM'];
 
@@ -64,6 +65,17 @@ export class RampartClient implements RampartApi {
       throw new Error(`rampart: getIncident ${res.status}`);
     }
     return (await res.json()) as Incident;
+  }
+
+  async getIncidentDetail(id: string): Promise<IncidentDetail> {
+    const base = await this.discovery.getBaseUrl('rampart');
+    const res = await this.fetchApi.fetch(
+      `${base}/v1/incidents/${encodeURIComponent(id)}/detail`,
+    );
+    if (!res.ok) {
+      throw new Error(`rampart: getIncidentDetail ${res.status}`);
+    }
+    return (await res.json()) as IncidentDetail;
   }
 
   async listSBOMsForComponent(componentRef: string): Promise<SBOM[]> {

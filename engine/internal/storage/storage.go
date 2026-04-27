@@ -34,6 +34,13 @@ type Storage interface {
 	GetIncident(ctx context.Context, id string) (*domain.Incident, error)
 	ListIncidents(ctx context.Context) ([]domain.Incident, error)
 
+	// ListIncidentsFiltered scopes by domain.IncidentFilter — multi-state
+	// + ecosystem + time range + substring search + owner. Backends apply
+	// the indexed dimensions natively (postgres WHERE / memory iteration)
+	// and post-filter the cross-table dimensions (Search across joined
+	// IoC ecosystem, Owner across joined Component). Newest-first.
+	ListIncidentsFiltered(ctx context.Context, filter domain.IncidentFilter) ([]domain.Incident, error)
+
 	// Remediation — append-only audit log. Each entry is attached to an
 	// Incident; storage backends are expected to append atomically so
 	// concurrent actors don't clobber each other's entries.

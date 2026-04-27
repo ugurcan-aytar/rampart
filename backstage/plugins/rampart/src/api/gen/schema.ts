@@ -146,8 +146,50 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List incidents, filterable by state / ecosystem / since. */
+        /**
+         * List incidents, filterable across multiple dimensions.
+         * @description Filter dimensions are AND'd together; multi-value filters
+         *     (`state`, `ecosystem`) are OR'd within the dimension. The
+         *     `search` filter is a substring match across `incident.id`,
+         *     `incident.iocId`, and any entry in
+         *     `incident.affectedComponentsSnapshot`. The `owner` filter
+         *     narrows to incidents whose snapshot includes at least one
+         *     component with that exact `owner`.
+         *
+         *     Operators on bigger fleets should rely on the indexed
+         *     dimensions (`state`, `from`, `to`) first; `search` and `owner`
+         *     are post-filtered after the indexed scan.
+         *
+         *     `since` is a v0.2.0-era alias for `from` and stays for
+         *     backward compat — `from` wins when both are supplied.
+         */
         get: operations["ListIncidents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/incidents/{id}/detail": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        /**
+         * Joined incident view (incident + IoC + affected components + remediations).
+         * @description Backs the IncidentDetailDrawer in the Backstage frontend — a
+         *     single round-trip avoids the N+1 the drawer would otherwise need
+         *     across `GET /v1/incidents/{id}`, `GET /v1/iocs/{iocId}`, and one
+         *     `GET /v1/components/{ref}` per affected component. Returns 404
+         *     when the incident does not exist.
+         */
+        get: operations["GetIncidentDetail"];
         put?: never;
         post?: never;
         delete?: never;
@@ -461,8 +503,13 @@ export interface components {
         /** @enum {string} */
         IoCKind: "packageVersion" | "packageRange" | "publisherAnomaly";
         /**
-         * @description Tagged union: `kind` names which of the three body sub-objects is set.
+         * @description Tagged union: `kind` names which of the body sub-objects is set.
          *     Engine-side `IoC.Validate()` enforces `set == 1 && matches kind`.
+         *
+         *     Both `publisherAnomaly` and `anomalyBody` carry `kind: publisherAnomaly`;
+         *     the variant slot tells consumers which data model applies. See ADR-0014.
+         *     - `publisherAnomaly` — maintainer-keyed (Theme D legacy, no shipping detector)
+         *     - `anomalyBody` — package-keyed (Theme F2 detectors)
          */
         IoC: {
             /** @description ULID */
@@ -479,6 +526,7 @@ export interface components {
             packageVersion?: components["schemas"]["IoCPackageVersion"];
             packageRange?: components["schemas"]["IoCPackageRange"];
             publisherAnomaly?: components["schemas"]["IoCPublisherAnomaly"];
+            anomalyBody?: components["schemas"]["IoCBodyAnomaly"];
         };
         IoCPackageVersion: {
             /** @example axios */
@@ -500,6 +548,26 @@ export interface components {
         IoCPublisherAnomaly: {
             publisherName: string;
             signals?: components["schemas"]["PublisherSignal"][];
+        };
+        /**
+         * @description Package-keyed publisher anomaly body (ADR-0014). Emitted by the
+         *     Theme F2 anomaly orchestrator after `SaveAnomaly`. Carries the
+         *     same shape the detector produced — `kind` is the AnomalyKind
+         *     enum, `confidence` is the detector's High/Medium/Low grade,
+         *     `evidence` is detector-specific structured data.
+         */
+        IoCBodyAnomaly: {
+            kind: components["schemas"]["AnomalyKind"];
+            confidence: components["schemas"]["Confidence"];
+            explanation?: string;
+            /**
+             * @description `<ecosystem>:<name>` — the Theme F1 convention.
+             * @example npm:axios
+             */
+            packageRef: string;
+            evidence?: {
+                [key: string]: unknown;
+            };
         };
         IoCPage: {
             items: components["schemas"]["IoC"][];
@@ -632,6 +700,26 @@ export interface components {
         IncidentPage: {
             items: components["schemas"]["Incident"][];
             nextCursor?: string;
+        };
+        /**
+         * @description Joined view used by the IncidentDetailDrawer: the incident itself,
+         *     the IoC that opened it, and the hydrated component records for
+         *     every entry in `affectedComponentsSnapshot`. Remediations live on
+         *     the embedded `incident` (append-only). When an affected component
+         *     ref no longer resolves (catalog deletion after the incident
+         *     opened), it is silently dropped from `affectedComponents` rather
+         *     than 404-ing the whole detail call — incident history must
+         *     survive catalog churn.
+         */
+        IncidentDetail: {
+            incident: components["schemas"]["Incident"];
+            /**
+             * @description The IoC that triggered the incident. Omitted when the IoC
+             *     no longer resolves (e.g. deleted after the incident opened);
+             *     we surface what we can rather than 404 the whole detail.
+             */
+            ioc?: components["schemas"]["IoC"];
+            affectedComponents?: components["schemas"]["Component"][];
         };
         IncidentTransitionRequest: {
             to: components["schemas"]["IncidentState"];
@@ -1044,8 +1132,19 @@ export interface operations {
     ListIncidents: {
         parameters: {
             query?: {
-                state?: components["schemas"]["IncidentState"];
-                ecosystem?: string;
+                /** @description One or more incident states to include. */
+                state?: components["schemas"]["IncidentState"][];
+                /** @description One or more ecosystems to include. */
+                ecosystem?: string[];
+                /** @description Inclusive lower bound on `openedAt`. */
+                from?: string;
+                /** @description Inclusive upper bound on `openedAt`. */
+                to?: string;
+                /** @description Substring match across incident_id / ioc_id / component_ref. */
+                search?: string;
+                /** @description Exact match against an affected component's owner. */
+                owner?: string;
+                /** @description Deprecated alias for `from`. `from` wins when both are set. */
                 since?: string;
                 /** @description Opaque pagination cursor returned from the previous page. */
                 cursor?: components["parameters"]["Cursor"];
@@ -1067,6 +1166,29 @@ export interface operations {
                     "application/json": components["schemas"]["IncidentPage"];
                 };
             };
+        };
+    };
+    GetIncidentDetail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Joined incident detail. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IncidentDetail"];
+                };
+            };
+            404: components["responses"]["NotFound"];
         };
     };
     GetIncident: {

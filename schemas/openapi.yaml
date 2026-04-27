@@ -242,16 +242,58 @@ paths:
     get:
       tags: [incidents]
       operationId: ListIncidents
-      summary: List incidents, filterable by state / ecosystem / since.
+      summary: List incidents, filterable across multiple dimensions.
+      description: |
+        Filter dimensions are AND'd together; multi-value filters
+        (`state`, `ecosystem`) are OR'd within the dimension. The
+        `search` filter is a substring match across `incident.id`,
+        `incident.iocId`, and any entry in
+        `incident.affectedComponentsSnapshot`. The `owner` filter
+        narrows to incidents whose snapshot includes at least one
+        component with that exact `owner`.
+
+        Operators on bigger fleets should rely on the indexed
+        dimensions (`state`, `from`, `to`) first; `search` and `owner`
+        are post-filtered after the indexed scan.
+
+        `since` is a v0.2.0-era alias for `from` and stays for
+        backward compat — `from` wins when both are supplied.
       parameters:
         - name: state
           in: query
-          schema: { $ref: '#/components/schemas/IncidentState' }
+          description: One or more incident states to include.
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/IncidentState' }
+          style: form
+          explode: true
         - name: ecosystem
           in: query
+          description: One or more ecosystems to include.
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+        - name: from
+          in: query
+          description: Inclusive lower bound on `openedAt`.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Inclusive upper bound on `openedAt`.
+          schema: { type: string, format: date-time }
+        - name: search
+          in: query
+          description: Substring match across incident_id / ioc_id / component_ref.
+          schema: { type: string }
+        - name: owner
+          in: query
+          description: Exact match against an affected component's owner.
           schema: { type: string }
         - name: since
           in: query
+          description: Deprecated alias for `from`. `from` wins when both are set.
           schema: { type: string, format: date-time }
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'
@@ -261,6 +303,30 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/IncidentPage' }
+
+  /v1/incidents/{id}/detail:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [incidents]
+      operationId: GetIncidentDetail
+      summary: Joined incident view (incident + IoC + affected components + remediations).
+      description: |
+        Backs the IncidentDetailDrawer in the Backstage frontend — a
+        single round-trip avoids the N+1 the drawer would otherwise need
+        across `GET /v1/incidents/{id}`, `GET /v1/iocs/{iocId}`, and one
+        `GET /v1/components/{ref}` per affected component. Returns 404
+        when the incident does not exist.
+      responses:
+        '200':
+          description: Joined incident detail.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/incidents/{id}:
     parameters:
@@ -711,9 +777,16 @@ components:
           $ref: '#/components/schemas/IoCPackageRange'
         publisherAnomaly:
           $ref: '#/components/schemas/IoCPublisherAnomaly'
+        anomalyBody:
+          $ref: '#/components/schemas/IoCBodyAnomaly'
       description: |
-        Tagged union: `kind` names which of the three body sub-objects is set.
+        Tagged union: `kind` names which of the body sub-objects is set.
         Engine-side `IoC.Validate()` enforces `set == 1 && matches kind`.
+
+        Both `publisherAnomaly` and `anomalyBody` carry `kind: publisherAnomaly`;
+        the variant slot tells consumers which data model applies. See ADR-0014.
+        - `publisherAnomaly` — maintainer-keyed (Theme D legacy, no shipping detector)
+        - `anomalyBody` — package-keyed (Theme F2 detectors)
 
     IoCPackageVersion:
       type: object
@@ -741,6 +814,27 @@ components:
         signals:
           type: array
           items: { $ref: '#/components/schemas/PublisherSignal' }
+
+    IoCBodyAnomaly:
+      type: object
+      description: |
+        Package-keyed publisher anomaly body (ADR-0014). Emitted by the
+        Theme F2 anomaly orchestrator after `SaveAnomaly`. Carries the
+        same shape the detector produced — `kind` is the AnomalyKind
+        enum, `confidence` is the detector's High/Medium/Low grade,
+        `evidence` is detector-specific structured data.
+      required: [kind, confidence, packageRef]
+      properties:
+        kind: { $ref: '#/components/schemas/AnomalyKind' }
+        confidence: { $ref: '#/components/schemas/Confidence' }
+        explanation: { type: string }
+        packageRef:
+          type: string
+          description: '`<ecosystem>:<name>` — the Theme F1 convention.'
+          example: 'npm:axios'
+        evidence:
+          type: object
+          additionalProperties: true
 
     IoCPage:
       type: object
@@ -923,6 +1017,30 @@ components:
           type: array
           items: { $ref: '#/components/schemas/Incident' }
         nextCursor: { type: string }
+
+    IncidentDetail:
+      type: object
+      description: |
+        Joined view used by the IncidentDetailDrawer: the incident itself,
+        the IoC that opened it, and the hydrated component records for
+        every entry in `affectedComponentsSnapshot`. Remediations live on
+        the embedded `incident` (append-only). When an affected component
+        ref no longer resolves (catalog deletion after the incident
+        opened), it is silently dropped from `affectedComponents` rather
+        than 404-ing the whole detail call — incident history must
+        survive catalog churn.
+      required: [incident]
+      properties:
+        incident: { $ref: '#/components/schemas/Incident' }
+        ioc:
+          description: |
+            The IoC that triggered the incident. Omitted when the IoC
+            no longer resolves (e.g. deleted after the incident opened);
+            we surface what we can rather than 404 the whole detail.
+          $ref: '#/components/schemas/IoC'
+        affectedComponents:
+          type: array
+          items: { $ref: '#/components/schemas/Component' }
 
     IncidentTransitionRequest:
       type: object

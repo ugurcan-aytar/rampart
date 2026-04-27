@@ -283,7 +283,8 @@ func (a *App) startAnomalyOrchestrator(parentCtx context.Context) func() {
 		return noop
 	}
 	orch, err := anomaly.NewOrchestrator(anomaly.OrchestratorConfig{
-		Storage: a.storage,
+		Storage:  a.storage,
+		EventBus: a.events,
 		Detectors: []anomaly.Detector{
 			maintainerdrift.New(),
 			oidcregression.New(),

@@ -1,22 +1,42 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Page, Header, Content, Table } from '@backstage/core-components';
 import { useApi } from '@backstage/core-plugin-api';
 
 import { rampartApiRef } from '../../api';
+import { IncidentDetailDrawer } from '../IncidentDetailDrawer';
 import type { components } from '../../api/gen/schema';
 
 type Incident = components['schemas']['Incident'];
 
 /**
  * IncidentDashboard lists every incident and updates live when the
- * engine's SSE stream fires `incident.opened`. The Table component is
- * Backstage's Material-UI wrapper; pageSize + search come from its
- * options prop.
+ * engine's SSE stream fires `incident.opened`. Row click opens the
+ * IncidentDetailDrawer; URL state at `?incident=<id>` makes the drawer
+ * deep-linkable and survives page reloads.
  */
 export const IncidentDashboard = () => {
   const api = useApi(rampartApiRef);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const selectedIncidentId = searchParams.get('incident');
+
+  const setSelectedIncidentId = useCallback(
+    (id: string | null) => {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        if (id === null) {
+          next.delete('incident');
+        } else {
+          next.set('incident', id);
+        }
+        return next;
+      });
+    },
+    [setSearchParams],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -31,10 +51,6 @@ export const IncidentDashboard = () => {
 
     const unsub = api.subscribeToStream(event => {
       if (event.type !== 'incident.opened') return;
-      // The envelope shape matches our IncidentOpenedEvent schema.
-      // Synthesize a minimal Incident row so the table updates without a
-      // full refetch; a real refetch is fine too — preferred once the
-      // endpoint pagination settles.
       const opened = event.data as { incidentId: string; occurredAt: string; iocId: string };
       setIncidents(prev => [
         {
@@ -69,6 +85,15 @@ export const IncidentDashboard = () => {
           ]}
           data={incidents}
           title={`${incidents.length} incident(s)`}
+          onRowClick={(_event, row) => {
+            if (row?.id) {
+              setSelectedIncidentId(row.id);
+            }
+          }}
+        />
+        <IncidentDetailDrawer
+          incidentId={selectedIncidentId}
+          onClose={() => setSelectedIncidentId(null)}
         />
       </Content>
     </Page>

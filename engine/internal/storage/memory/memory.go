@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -181,6 +182,123 @@ func (s *Store) ListIncidents(ctx context.Context) ([]domain.Incident, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].OpenedAt.Before(out[j].OpenedAt) })
 	return out, ctx.Err()
+}
+
+func (s *Store) ListIncidentsFiltered(ctx context.Context, f domain.IncidentFilter) ([]domain.Incident, error) {
+	s.mu.RLock()
+	candidates := make([]domain.Incident, 0, len(s.incidents))
+	for _, inc := range s.incidents {
+		if !matchesIndexedFilter(inc, f) {
+			continue
+		}
+		candidates = append(candidates, inc)
+	}
+	// Snapshot the joined-data lookups while still holding the read
+	// lock so we don't race against a concurrent UpsertIoC.
+	iocsCopy := make(map[string]domain.IoC, len(s.iocs))
+	for k, v := range s.iocs {
+		iocsCopy[k] = v
+	}
+	componentsCopy := make(map[string]domain.Component, len(s.components))
+	for k, v := range s.components {
+		componentsCopy[k] = v
+	}
+	s.mu.RUnlock()
+
+	out := make([]domain.Incident, 0, len(candidates))
+	for _, inc := range candidates {
+		if !matchesEcosystemFilter(inc, f, iocsCopy) {
+			continue
+		}
+		if !matchesSearchFilter(inc, f) {
+			continue
+		}
+		if !matchesOwnerFilter(inc, f, componentsCopy) {
+			continue
+		}
+		out = append(out, inc)
+	}
+	// Newest-first; matches postgres ORDER BY opened_at DESC.
+	sort.Slice(out, func(i, j int) bool { return out[i].OpenedAt.After(out[j].OpenedAt) })
+	if f.Limit > 0 && len(out) > f.Limit {
+		out = out[:f.Limit]
+	}
+	return out, ctx.Err()
+}
+
+// matchesIndexedFilter checks the dimensions the postgres equivalent
+// covers in its WHERE clause: state set, time-range, id substring.
+func matchesIndexedFilter(inc domain.Incident, f domain.IncidentFilter) bool {
+	if len(f.States) > 0 {
+		ok := false
+		for _, st := range f.States {
+			if inc.State == st {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	if f.From != nil && inc.OpenedAt.Before(*f.From) {
+		return false
+	}
+	if f.To != nil && inc.OpenedAt.After(*f.To) {
+		return false
+	}
+	return true
+}
+
+func matchesEcosystemFilter(inc domain.Incident, f domain.IncidentFilter, iocs map[string]domain.IoC) bool {
+	if len(f.Ecosystems) == 0 {
+		return true
+	}
+	ioc, ok := iocs[inc.IoCID]
+	if !ok {
+		return false
+	}
+	for _, eco := range f.Ecosystems {
+		if eco != "" && ioc.Ecosystem == eco {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesSearchFilter(inc domain.Incident, f domain.IncidentFilter) bool {
+	if f.Search == "" {
+		return true
+	}
+	q := strings.ToLower(f.Search)
+	if strings.Contains(strings.ToLower(inc.ID), q) {
+		return true
+	}
+	if strings.Contains(strings.ToLower(inc.IoCID), q) {
+		return true
+	}
+	for _, ref := range inc.AffectedComponentsSnapshot {
+		if strings.Contains(strings.ToLower(ref), q) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesOwnerFilter(inc domain.Incident, f domain.IncidentFilter, components map[string]domain.Component) bool {
+	if f.Owner == "" {
+		return true
+	}
+	for _, ref := range inc.AffectedComponentsSnapshot {
+		c, ok := components[ref]
+		if !ok {
+			continue
+		}
+		if c.Owner == f.Owner {
+			return true
+		}
+	}
+	return false
 }
 
 // AppendRemediation atomically appends to an incident's Remediations

@@ -18,38 +18,51 @@ import (
 // Cursor pagination is Phase 2; the params are accepted and ignored so
 // clients that already send them don't break.
 func (s *Server) ListIncidents(w http.ResponseWriter, r *http.Request, params gen.ListIncidentsParams) {
-	incs, err := s.storage.ListIncidents(r.Context())
+	filter := domain.IncidentFilter{}
+	if params.State != nil {
+		for _, st := range *params.State {
+			filter.States = append(filter.States, domain.IncidentState(st))
+		}
+	}
+	if params.Ecosystem != nil {
+		for _, eco := range *params.Ecosystem {
+			if eco != "" {
+				filter.Ecosystems = append(filter.Ecosystems, eco)
+			}
+		}
+	}
+	// `from` wins when both `from` and `since` are supplied — `since`
+	// is the v0.2.0-era alias preserved for backward compat.
+	switch {
+	case params.From != nil:
+		t := *params.From
+		filter.From = &t
+	case params.Since != nil:
+		t := *params.Since
+		filter.From = &t
+	}
+	if params.To != nil {
+		t := *params.To
+		filter.To = &t
+	}
+	if params.Search != nil {
+		filter.Search = *params.Search
+	}
+	if params.Owner != nil {
+		filter.Owner = *params.Owner
+	}
+	if params.Limit != nil {
+		filter.Limit = *params.Limit
+	}
+
+	incs, err := s.storage.ListIncidentsFiltered(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 		return
 	}
 
-	filtered := incs[:0]
+	items := make([]gen.Incident, 0, len(incs))
 	for _, inc := range incs {
-		if params.State != nil && domain.IncidentState(*params.State) != inc.State {
-			continue
-		}
-		if params.Since != nil && inc.OpenedAt.Before(*params.Since) {
-			continue
-		}
-		if params.Ecosystem != nil && *params.Ecosystem != "" {
-			// Ecosystem filter routes through the linked IoC; join on the fly.
-			// A listing endpoint doing a join every call would be a problem in
-			// production, but Phase 1 memory storage with <100 incidents is
-			// fine. Phase 2 storage builds the right index.
-			ioc, err := s.storage.GetIoC(r.Context(), inc.IoCID)
-			if err != nil || ioc == nil || ioc.Ecosystem != *params.Ecosystem {
-				continue
-			}
-		}
-		filtered = append(filtered, inc)
-	}
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].OpenedAt.After(filtered[j].OpenedAt)
-	})
-
-	items := make([]gen.Incident, 0, len(filtered))
-	for _, inc := range filtered {
 		items = append(items, toGenIncident(inc))
 	}
 	writeJSON(w, http.StatusOK, gen.IncidentPage{Items: items})
@@ -72,6 +85,62 @@ func (s *Server) GetIncident(w http.ResponseWriter, r *http.Request, id string) 
 		return
 	}
 	writeJSON(w, http.StatusOK, toGenIncident(*inc))
+}
+
+// GetIncidentDetail backs the IncidentDetailDrawer in the Backstage
+// frontend with a single round-trip: the incident row + its IoC + every
+// component referenced by AffectedComponentsSnapshot, all hydrated.
+// Remediations are already part of the Incident value (append-only on
+// the same row), so no separate ListRemediations call is needed.
+//
+// Performance posture: 4-N storage calls (1 GetIncident + 1 GetIoC + N
+// GetComponent for N affected components). Memory backend keeps these
+// under a millisecond; postgres pool services them serially in a single
+// HTTP request — well inside the <200ms drawer-open budget for typical
+// incidents (≤10 components). N+1 across thousands of components would
+// need a denormalised view; not the v0.2.0 traffic shape.
+//
+// Failure-mode discipline: missing IoC or missing component refs no
+// longer 404 the whole detail call (incident history must survive
+// catalog churn). The IoC field is omitted when the IoC has been
+// deleted; affected components silently drop deleted refs.
+func (s *Server) GetIncidentDetail(w http.ResponseWriter, r *http.Request, id string) {
+	inc, err := s.storage.GetIncident(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "INCIDENT_NOT_FOUND", "incident "+id+" not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
+		return
+	}
+
+	out := gen.IncidentDetail{
+		Incident:           toGenIncident(*inc),
+		AffectedComponents: &[]gen.Component{},
+	}
+
+	if inc.IoCID != "" {
+		ioc, err := s.storage.GetIoC(r.Context(), inc.IoCID)
+		if err == nil && ioc != nil {
+			gioc := toGenIoC(*ioc)
+			out.Ioc = &gioc
+		}
+	}
+
+	if len(inc.AffectedComponentsSnapshot) > 0 {
+		hydrated := make([]gen.Component, 0, len(inc.AffectedComponentsSnapshot))
+		for _, ref := range inc.AffectedComponentsSnapshot {
+			c, err := s.storage.GetComponent(r.Context(), ref)
+			if err != nil || c == nil {
+				continue
+			}
+			hydrated = append(hydrated, toGenComponent(*c))
+		}
+		out.AffectedComponents = &hydrated
+	}
+
+	writeJSON(w, http.StatusOK, out)
 }
 
 // TransitionIncident advances an incident's state machine. Calls through
