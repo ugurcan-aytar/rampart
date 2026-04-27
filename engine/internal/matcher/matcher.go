@@ -55,11 +55,38 @@ func Evaluate(ioc domain.IoC, sbom domain.SBOM) Match {
 	case domain.IoCKindPackageRange:
 		return evaluatePackageRange(ioc, sbom)
 	case domain.IoCKindPublisherAnomaly:
-		// Phase 2: scan sbom.Packages against publisher graph signals.
+		// Two body variants share this kind (ADR-0014):
+		//   - PublisherAnomaly (maintainer-keyed, Theme D legacy) — no
+		//     shipping detector produces it; stays no-op.
+		//   - AnomalyBody (package-keyed, Theme F2) — match SBOM
+		//     packages whose `<ecosystem>:<name>` equals the
+		//     anomaly's PackageRef.
+		if ioc.AnomalyBody != nil {
+			return evaluateAnomalyBody(ioc, sbom)
+		}
 		return Match{}
 	default:
 		return Match{}
 	}
+}
+
+// evaluateAnomalyBody implements the package-keyed publisher anomaly
+// match: the IoC's PackageRef is `<ecosystem>:<name>`; we match every
+// SBOM package whose Ecosystem + Name reconstruct to that ref. Version
+// is intentionally not part of the key — anomalies are a property of
+// the package, not a specific release.
+func evaluateAnomalyBody(ioc domain.IoC, sbom domain.SBOM) Match {
+	target := ioc.AnomalyBody.PackageRef
+	if target == "" {
+		return Match{}
+	}
+	var hits []domain.PackageVersion
+	for _, p := range sbom.Packages {
+		if p.Ecosystem+":"+p.Name == target {
+			hits = append(hits, p)
+		}
+	}
+	return Match{Matched: len(hits) > 0, Packages: hits}
 }
 
 func evaluatePackageVersion(ioc domain.IoC, sbom domain.SBOM) Match {

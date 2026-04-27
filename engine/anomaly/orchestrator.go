@@ -7,6 +7,11 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/oklog/ulid/v2"
+
+	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
+	"github.com/ugurcan-aytar/rampart/engine/internal/events"
+	"github.com/ugurcan-aytar/rampart/engine/internal/iocforward"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage"
 )
 
@@ -34,6 +39,7 @@ import (
 // a no-op.
 type Orchestrator struct {
 	store        storage.Storage
+	bus          *events.Bus
 	detectors    []Detector
 	tickInterval time.Duration
 	batchSize    int
@@ -43,9 +49,11 @@ type Orchestrator struct {
 
 // OrchestratorConfig wires the orchestrator. Zero values produce
 // sensible defaults: 1h tick, 200 packages per batch, 50-snapshot
-// history per package.
+// history per package. When EventBus is non-nil the orchestrator
+// emits IoCs (ADR-0014) in addition to persisting Anomalies.
 type OrchestratorConfig struct {
 	Storage      storage.Storage
+	EventBus     *events.Bus
 	Detectors    []Detector
 	TickInterval time.Duration
 	BatchSize    int
@@ -79,6 +87,7 @@ func NewOrchestrator(cfg OrchestratorConfig) (*Orchestrator, error) {
 	}
 	return &Orchestrator{
 		store:        cfg.Storage,
+		bus:          cfg.EventBus,
 		detectors:    cfg.Detectors,
 		tickInterval: tick,
 		batchSize:    batch,
@@ -169,6 +178,17 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 				raised++
 				o.log.Info("anomaly raised",
 					"kind", a.Kind, "ref", ref, "confidence", a.Confidence)
+
+				// IoC bridge (ADR-0014): convert the anomaly into an
+				// IoC + run the standard forward-match path so any
+				// SBOM that references this package opens an
+				// incident. Failure here is logged but not fatal —
+				// the anomaly is already persisted, so operators can
+				// triage via /v1/anomalies even without an incident.
+				if err := o.emitIoC(ctx, a, ref, tickTime); err != nil {
+					o.log.Warn("ioc emission failed",
+						"kind", a.Kind, "ref", ref, "err", err)
+				}
 			}
 		}
 	}
@@ -178,4 +198,67 @@ func (o *Orchestrator) Tick(ctx context.Context) error {
 		"skipped", skipped,
 		"failed", failed)
 	return nil
+}
+
+// emitIoC builds an IoC carrying the IoCBodyAnomaly variant and
+// submits it through iocforward.Submit. ADR-0014 documents why this
+// happens: the anomaly is also persisted in /v1/anomalies, but the
+// IoC + matcher chain is what produces an Incident in the standard
+// triage workflow.
+func (o *Orchestrator) emitIoC(ctx context.Context, a domain.Anomaly, packageRef string, tickTime time.Time) error {
+	ecosystem := ecosystemFromPackageRef(packageRef)
+	ioc := domain.IoC{
+		ID:          deterministicIoCID(tickTime),
+		Kind:        domain.IoCKindPublisherAnomaly,
+		Severity:    severityFromConfidence(a.Confidence),
+		Ecosystem:   ecosystem,
+		Source:      "rampart-anomaly-orchestrator",
+		PublishedAt: tickTime,
+		Description: a.Explanation,
+		AnomalyBody: &domain.IoCBodyAnomaly{
+			Kind:        a.Kind,
+			Confidence:  a.Confidence,
+			Explanation: a.Explanation,
+			PackageRef:  packageRef,
+			Evidence:    a.Evidence,
+		},
+	}
+	_, err := iocforward.Submit(ctx, o.store, o.bus, ioc)
+	return err
+}
+
+// ecosystemFromPackageRef extracts the `<ecosystem>` head from a
+// `<ecosystem>:<name>` ref. Falls back to the ref itself for
+// malformed input — IoC.Ecosystem is informational on the wire.
+func ecosystemFromPackageRef(ref string) string {
+	for i, r := range ref {
+		if r == ':' {
+			return ref[:i]
+		}
+	}
+	return ref
+}
+
+// severityFromConfidence maps the detector's confidence grade onto
+// the IoC severity scale. High = critical (operator must look),
+// medium = high, low = medium (worth surfacing, low priority).
+func severityFromConfidence(c domain.ConfidenceLevel) domain.Severity {
+	switch c {
+	case domain.ConfidenceHigh:
+		return domain.SeverityCritical
+	case domain.ConfidenceMedium:
+		return domain.SeverityHigh
+	default:
+		return domain.SeverityMedium
+	}
+}
+
+// deterministicIoCID synthesises a ULID whose timestamp portion
+// equals tickTime. Two anomalies in the same tick get distinct
+// (random-suffix) IDs because ulid.Make() pulls fresh entropy each
+// call; that's fine — UpsertIoC's dedup is by ID + the Anomaly
+// table's own UNIQUE constraint protects against double-counting on
+// the anomaly side.
+func deterministicIoCID(tickTime time.Time) string {
+	return ulid.MustNew(ulid.Timestamp(tickTime), nil).String()
 }

@@ -503,8 +503,13 @@ export interface components {
         /** @enum {string} */
         IoCKind: "packageVersion" | "packageRange" | "publisherAnomaly";
         /**
-         * @description Tagged union: `kind` names which of the three body sub-objects is set.
+         * @description Tagged union: `kind` names which of the body sub-objects is set.
          *     Engine-side `IoC.Validate()` enforces `set == 1 && matches kind`.
+         *
+         *     Both `publisherAnomaly` and `anomalyBody` carry `kind: publisherAnomaly`;
+         *     the variant slot tells consumers which data model applies. See ADR-0014.
+         *     - `publisherAnomaly` — maintainer-keyed (Theme D legacy, no shipping detector)
+         *     - `anomalyBody` — package-keyed (Theme F2 detectors)
          */
         IoC: {
             /** @description ULID */
@@ -521,6 +526,7 @@ export interface components {
             packageVersion?: components["schemas"]["IoCPackageVersion"];
             packageRange?: components["schemas"]["IoCPackageRange"];
             publisherAnomaly?: components["schemas"]["IoCPublisherAnomaly"];
+            anomalyBody?: components["schemas"]["IoCBodyAnomaly"];
         };
         IoCPackageVersion: {
             /** @example axios */
@@ -542,6 +548,26 @@ export interface components {
         IoCPublisherAnomaly: {
             publisherName: string;
             signals?: components["schemas"]["PublisherSignal"][];
+        };
+        /**
+         * @description Package-keyed publisher anomaly body (ADR-0014). Emitted by the
+         *     Theme F2 anomaly orchestrator after `SaveAnomaly`. Carries the
+         *     same shape the detector produced — `kind` is the AnomalyKind
+         *     enum, `confidence` is the detector's High/Medium/Low grade,
+         *     `evidence` is detector-specific structured data.
+         */
+        IoCBodyAnomaly: {
+            kind: components["schemas"]["AnomalyKind"];
+            confidence: components["schemas"]["Confidence"];
+            explanation?: string;
+            /**
+             * @description `<ecosystem>:<name>` — the Theme F1 convention.
+             * @example npm:axios
+             */
+            packageRef: string;
+            evidence?: {
+                [key: string]: unknown;
+            };
         };
         IoCPage: {
             items: components["schemas"]["IoC"][];

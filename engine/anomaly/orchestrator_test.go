@@ -13,6 +13,7 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/anomaly/oidcregression"
 	"github.com/ugurcan-aytar/rampart/engine/anomaly/versionjump"
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
+	"github.com/ugurcan-aytar/rampart/engine/internal/events"
 	"github.com/ugurcan-aytar/rampart/engine/internal/storage/memory"
 )
 
@@ -149,6 +150,76 @@ func TestOrchestrator_TickIsIdempotent(t *testing.T) {
 	// constraint may treat the slightly-later DetectedAt as a new
 	// row. The Count never exceeds (ticks * detectors * 1).
 	require.LessOrEqual(t, len(second), 2)
+}
+
+// TestOrchestrator_IoCBridge_OpensIncidentForMatchingSBOM exercises
+// the F3 IoC-bridge keystone end-to-end:
+//
+//  1. Seed an SBOM that contains npm:axios.
+//  2. Seed snapshot history that triggers the OIDC-regression detector.
+//  3. Run one orchestrator tick with EventBus wired.
+//  4. Assert: 1 anomaly persisted + 1 IoC emitted + 1 incident opened.
+func TestOrchestrator_IoCBridge_OpensIncidentForMatchingSBOM(t *testing.T) {
+	store := memory.New()
+	defer store.Close()
+	bus := events.NewBus(64)
+	ctx := context.Background()
+
+	// Component + SBOM containing npm:axios.
+	require.NoError(t, store.UpsertComponent(ctx, domain.Component{
+		Ref: "kind:Component/default/web-app", Kind: "Component",
+		Namespace: "default", Name: "web-app", Owner: "team-platform",
+	}))
+	require.NoError(t, store.UpsertSBOM(ctx, domain.SBOM{
+		ID: "sbom-1", ComponentRef: "kind:Component/default/web-app",
+		Ecosystem: "npm", GeneratedAt: time.Now().UTC(),
+		Packages: []domain.PackageVersion{
+			{Ecosystem: "npm", Name: "axios", Version: "1.11.0",
+				PURL: "pkg:npm/axios@1.11.0"},
+		},
+	}))
+
+	// Snapshot history that trips the OIDC-regression detector.
+	now := time.Now().UTC()
+	require.NoError(t, store.SavePublisherSnapshot(ctx, domain.PublisherSnapshot{
+		PackageRef: "npm:axios", SnapshotAt: now.Add(-time.Hour),
+		PublishMethod: "oidc-trusted-publisher", LatestVersion: "1.10.0",
+	}))
+	require.NoError(t, store.SavePublisherSnapshot(ctx, domain.PublisherSnapshot{
+		PackageRef: "npm:axios", SnapshotAt: now,
+		PublishMethod: "token", LatestVersion: "1.11.0",
+	}))
+
+	orch, err := anomaly.NewOrchestrator(anomaly.OrchestratorConfig{
+		Storage:   store,
+		EventBus:  bus,
+		Detectors: []anomaly.Detector{oidcregression.New()},
+	})
+	require.NoError(t, err)
+	require.NoError(t, orch.Tick(ctx))
+
+	anomalies, err := store.ListAnomalies(ctx, domain.AnomalyFilter{})
+	require.NoError(t, err)
+	require.Len(t, anomalies, 1)
+
+	iocs, err := store.ListIoCs(ctx)
+	require.NoError(t, err)
+	require.Len(t, iocs, 1)
+	emitted := iocs[0]
+	require.Equal(t, domain.IoCKindPublisherAnomaly, emitted.Kind)
+	require.NotNil(t, emitted.AnomalyBody, "AnomalyBody variant must be populated")
+	require.Equal(t, "npm:axios", emitted.AnomalyBody.PackageRef)
+	require.Equal(t, "rampart-anomaly-orchestrator", emitted.Source)
+	// OIDC adjacent regression → ConfidenceHigh → SeverityCritical.
+	require.Equal(t, domain.SeverityCritical, emitted.Severity)
+
+	incidents, err := store.ListIncidents(ctx)
+	require.NoError(t, err)
+	require.Len(t, incidents, 1, "matcher must open one incident for the matching SBOM")
+	require.Equal(t, emitted.ID, incidents[0].IoCID)
+	require.Equal(t, domain.StatePending, incidents[0].State)
+	require.Equal(t, []string{"kind:Component/default/web-app"},
+		incidents[0].AffectedComponentsSnapshot)
 }
 
 func TestOrchestrator_RunFiresImmediateTickAndStops(t *testing.T) {

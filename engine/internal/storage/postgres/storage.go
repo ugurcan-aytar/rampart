@@ -271,6 +271,7 @@ type iocBody struct {
 	PackageVersion   *domain.IoCPackageVersion   `json:"packageVersion,omitempty"`
 	PackageRange     *domain.IoCPackageRange     `json:"packageRange,omitempty"`
 	PublisherAnomaly *domain.IoCPublisherAnomaly `json:"publisherAnomaly,omitempty"`
+	AnomalyBody      *domain.IoCBodyAnomaly      `json:"anomalyBody,omitempty"`
 }
 
 func (s *Store) UpsertIoC(ctx context.Context, i domain.IoC) error {
@@ -278,6 +279,7 @@ func (s *Store) UpsertIoC(ctx context.Context, i domain.IoC) error {
 		PackageVersion:   i.PackageVersion,
 		PackageRange:     i.PackageRange,
 		PublisherAnomaly: i.PublisherAnomaly,
+		AnomalyBody:      i.AnomalyBody,
 	}
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -354,6 +356,7 @@ func scanIoC(r rowScanner) (*domain.IoC, error) {
 	i.PackageVersion = parsed.PackageVersion
 	i.PackageRange = parsed.PackageRange
 	i.PublisherAnomaly = parsed.PublisherAnomaly
+	i.AnomalyBody = parsed.AnomalyBody
 	return &i, nil
 }
 

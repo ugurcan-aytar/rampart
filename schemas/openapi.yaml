@@ -777,9 +777,16 @@ components:
           $ref: '#/components/schemas/IoCPackageRange'
         publisherAnomaly:
           $ref: '#/components/schemas/IoCPublisherAnomaly'
+        anomalyBody:
+          $ref: '#/components/schemas/IoCBodyAnomaly'
       description: |
-        Tagged union: `kind` names which of the three body sub-objects is set.
+        Tagged union: `kind` names which of the body sub-objects is set.
         Engine-side `IoC.Validate()` enforces `set == 1 && matches kind`.
+
+        Both `publisherAnomaly` and `anomalyBody` carry `kind: publisherAnomaly`;
+        the variant slot tells consumers which data model applies. See ADR-0014.
+        - `publisherAnomaly` — maintainer-keyed (Theme D legacy, no shipping detector)
+        - `anomalyBody` — package-keyed (Theme F2 detectors)
 
     IoCPackageVersion:
       type: object
@@ -807,6 +814,27 @@ components:
         signals:
           type: array
           items: { $ref: '#/components/schemas/PublisherSignal' }
+
+    IoCBodyAnomaly:
+      type: object
+      description: |
+        Package-keyed publisher anomaly body (ADR-0014). Emitted by the
+        Theme F2 anomaly orchestrator after `SaveAnomaly`. Carries the
+        same shape the detector produced — `kind` is the AnomalyKind
+        enum, `confidence` is the detector's High/Medium/Low grade,
+        `evidence` is detector-specific structured data.
+      required: [kind, confidence, packageRef]
+      properties:
+        kind: { $ref: '#/components/schemas/AnomalyKind' }
+        confidence: { $ref: '#/components/schemas/Confidence' }
+        explanation: { type: string }
+        packageRef:
+          type: string
+          description: '`<ecosystem>:<name>` — the Theme F1 convention.'
+          example: 'npm:axios'
+        evidence:
+          type: object
+          additionalProperties: true
 
     IoCPage:
       type: object
