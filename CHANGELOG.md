@@ -7,6 +7,186 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-04-27
+
+Major feature release. Six themes ship together: production-grade
+security, Backstage architecture completion, multi-ecosystem parser
+expansion (Go + Cargo), Postgres storage, frontend depth, and
+publisher-anomaly detection.
+
+### Added
+
+**Production security posture (Theme A)**
+
+- JWT authentication middleware on `/v1/*` routes with HS256/RS256
+  signing, scope-based authorization (`read` / `write` / `admin`),
+  and token issuance via `POST /v1/auth/token`. Default off
+  (`RAMPART_AUTH_ENABLED=false`) for backward compat — operators
+  opt in per deployment.
+- Env-configured CORS allow-list (`RAMPART_CORS_ORIGINS`). Default
+  deny-all; v0.1.x permissive wildcard removed. Dev convenience
+  flag `RAMPART_CORS_ALLOW_ALL=true` warns in logs.
+
+**Backstage architecture completion (Theme B)**
+
+- Frontend client routes through the Backstage backend proxy
+  (relative URLs). `rampart.baseUrl` config removed; `backend.baseUrl`
+  + `/api/rampart/v1` is the new pattern.
+- `CatalogSync` real push: tick loop pushes Backstage `Component`
+  entities to the engine with topological ordering and a client-side
+  memo for idempotency.
+- Service-to-service auth between Backstage backend and engine via
+  static JWT token (`RAMPART_ENGINE_AUTH_TOKEN`). See ADR-0012 for
+  the auth-boundary-at-engine architecture.
+- "No CORS config needed" install posture documented in
+  `docs/operations/deployment-patterns.md`.
+
+**Multi-ecosystem parsers (Theme C)**
+
+- Go modules parser (`engine/sbom/gomod`) — `go.sum` + `go.mod`
+  parsing, `replace` directive handling, pseudo-version
+  normalisation.
+- Cargo parser (`engine/sbom/cargo`) — `Cargo.lock` TOML, workspace-
+  aware, registry-vs-git source distinction.
+- CLI auto-detects ecosystem from filename (`go.sum` → gomod,
+  `Cargo.lock` → cargo, `package-lock.json` → npm).
+- Rust sidecar parity for both ecosystems via existing parity-test
+  harness.
+- PyPI + Maven parsers ship in v0.2.1 (Theme C3+C4).
+
+**Postgres storage backend (Theme D)**
+
+- `engine/internal/storage/postgres` package implements the
+  `Storage` interface against `pgx` + goose migrations.
+- Seven migration files (`components`, `sboms`, `iocs`, `incidents`,
+  `publishers`, `publisher_history`, `anomalies`).
+- `docker-compose.yml` includes `postgres:16-alpine` service with
+  healthcheck. Default backend; in-memory mode preserved via
+  `RAMPART_STORAGE=memory` for development.
+- Shared `storagetest` contract suite ensures interface parity
+  between backends.
+
+**Frontend depth (Theme E)**
+
+- Incident detail drawer — MUI `Drawer` with timeline, matched IoC,
+  affected components, and remediation log panels. New
+  `GET /v1/incidents/{id}/detail` joined endpoint.
+- Blast-radius graph visualisation — `reactflow` + `dagre` auto-
+  layout, red/orange/grey color encoding, double-click re-root.
+- Search + filter toolbar — multi-state, multi-ecosystem, date-
+  range, search substring, owner. URL state via `useSearchParams`
+  for bookmarkable views.
+- `IncidentDashboard` list-view filter expansion (multi-state,
+  ecosystem array, time-range, search, owner) on
+  `GET /v1/incidents`.
+
+**Publisher-anomaly detector (Theme F)**
+
+- Publisher graph ingestion (F1): npm registry + GitHub API
+  ingestors with rate-limit awareness, retry/backoff, structured
+  logging. Publisher history persisted in `publisher_history`
+  table. Cron tick configurable via
+  `RAMPART_PUBLISHER_REFRESH_INTERVAL` (default 1h, default OFF).
+- Three anomaly detectors (F2): maintainer email drift, OIDC
+  publishing regression, version jump. Confidence levels
+  (`high` / `medium` / `low`) with explicit thresholds. Pre-1.0 +
+  pre-release semver edge cases handled.
+- Anomaly orchestrator emits IoCs via the new `IoCBodyAnomaly` body
+  variant (F3 + ADR-0014). Anomalies flow through the standard
+  incident workflow: detect → IoC emit → matcher dispatch →
+  incident open.
+- Default off (`RAMPART_PUBLISHER_ENABLED`,
+  `RAMPART_ANOMALY_ENABLED`).
+
+### Performance baseline
+
+Honest baseline measured on M3 Pro / `postgres:16-alpine` (see
+[`docs/performance/v020-load-test.md`](docs/performance/v020-load-test.md)
+for the harness, methodology, and the 3-run table):
+
+- Total ingest 518 s (vs 300 s target — miss ~1.7×)
+- Blast-radius p95 2 977 ms (vs 500 ms target — miss ~6×)
+- Incident-detail p95 2.97 ms (vs 200 ms target — pass with 67×
+  headroom)
+
+Both ingest and blast-radius misses share a single root cause: the
+matcher's forward-match runs synchronously on the request path
+instead of joining against the cached `incidents` table. The
+`incident-detail` endpoint *is* a JOIN against the indexed table —
+its 67× headroom confirms the schema design is sound and isolates
+the bottleneck to matcher live-execution.
+
+v0.2.1 targets the fix (cache + bulk endpoint + index migration);
+the same load-test harness will measure the before/after delta on
+the same fixture corpus.
+
+### Changed
+
+- `IncidentDashboard` row click opens the detail drawer (was: no
+  detail surface in v0.1.x).
+- `RampartClient` defaults to relative URLs against the Backstage
+  backend; explicit engine URL override only for non-Backstage
+  deployments.
+- `make demo-axios` includes the Postgres service; in-memory mode
+  is no longer the default but preserved as `RAMPART_STORAGE=memory`.
+
+### Deprecated
+
+- `rampart.baseUrl` config in Backstage `app-config.yaml` —
+  superseded by `backend.baseUrl` + `/api/rampart/v1` relative URL
+  routing. Targeted for removal in v1.0.
+
+### Removed
+
+- v0.1.x permissive CORS wildcard. Operators must explicitly
+  configure `RAMPART_CORS_ORIGINS` or run behind the Backstage
+  proxy.
+
+### Migration
+
+See [`docs/migration/v0.1.x-to-v0.2.0.md`](docs/migration/v0.1.x-to-v0.2.0.md)
+for the upgrade guide. Three required actions: provision Postgres
+(or set `RAMPART_STORAGE=memory`), configure JWT signing if auth
+enabled, update Backstage plugin config.
+
+### Architecture decision records
+
+New ADRs documenting v0.2.0 design decisions:
+
+- [ADR-0011](docs/decisions/0011-v020-scope-commitment.md) — v0.2.0
+  scope commitment (six-theme major release) plus amendments for
+  the Theme C `IoCKind` ecosystem-naming deviation and the Theme F2
+  IoC-emission deferral.
+- [ADR-0012](docs/decisions/0012-auth-boundary-at-engine.md) —
+  auth boundary at the engine, not the Backstage proxy.
+- [ADR-0013](docs/decisions/0013-publisher-domain-split.md) —
+  publisher domain `Snapshot` vs `Profile` split.
+- [ADR-0014](docs/decisions/0014-anomaly-ioc-bridge.md) — anomaly →
+  IoC bridge (`IoCBodyAnomaly` variant).
+
+### Deferred
+
+- **Theme A3** — Backstage guest auth → real OAuth provider.
+  Requires a GitHub OAuth App registration; ships in v0.2.1 with a
+  setup guide.
+- **Theme C3+C4** — PyPI + Maven/Gradle parsers. Separate PR;
+  targets v0.2.1.
+- **Performance fix scope** (matcher cache + bulk ingest + index
+  migration). v0.2.1, with measured before/after delta on the
+  v0.2.0 baseline harness.
+
+### Known limitations
+
+- BlastRadiusGraph 100-component performance not yet measured —
+  Playwright e2e benchmark planned for the v0.10.0+ frontend
+  hardening pass.
+- Distinct anomaly icon in `IncidentDashboard` list view requires
+  N+1 IoC fetch; rendered correctly in the detail drawer; the
+  list-view distinguisher is targeted for v0.10.0+.
+- MUI 9 + Recharts 3.x are incompatible with Backstage's webpack
+  bundle; pinned to MUI 5 / Recharts 2.x. Re-evaluation triggers
+  documented in `ROADMAP.md`.
+
 ## [0.1.0] — 2026-04-21
 
 Initial public release. Three quickstart paths tested green on the
@@ -143,4 +323,5 @@ Documented in `SECURITY.md`:
 
 None — this is the first release.
 
+[0.2.0]: https://github.com/ugurcan-aytar/rampart/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ugurcan-aytar/rampart/releases/tag/v0.1.0
