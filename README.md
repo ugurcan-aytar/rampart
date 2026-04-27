@@ -264,6 +264,7 @@ signature verifiable against the GitHub OIDC issuer. See
 - [CHANGELOG.md](./CHANGELOG.md) — release notes
 - [DEPS.md](./DEPS.md) — every runtime dependency, justified
 - [docs/decisions/](./docs/decisions/) — 9 ADRs (cgo + UDS, Yarn 4, parser placement, enableScripts hardening, CI/CD pipeline)
+- [docs/migration/v0.1.x-to-v0.2.0.md](./docs/migration/v0.1.x-to-v0.2.0.md) — upgrade guide if you're coming from v0.1.x
 - [docs/benchmarks/sbom-parser.md](./docs/benchmarks/sbom-parser.md) — Go vs Rust parser throughput (honest numbers)
 - [schemas/openapi.yaml](./schemas/openapi.yaml) — API contract (single source of truth)
 - [schemas/native-ipc.md](./schemas/native-ipc.md) — wire protocol for the opt-in Rust sidecar
