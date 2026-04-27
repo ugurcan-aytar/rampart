@@ -1,23 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
-import Box from '@mui/material/Box';
-import Checkbox from '@mui/material/Checkbox';
-import Chip from '@mui/material/Chip';
-import FormControl from '@mui/material/FormControl';
-import InputLabel from '@mui/material/InputLabel';
-import ListItemText from '@mui/material/ListItemText';
-import MenuItem from '@mui/material/MenuItem';
-import OutlinedInput from '@mui/material/OutlinedInput';
-import Select from '@mui/material/Select';
-import type { SelectChangeEvent } from '@mui/material/Select';
-import TextField from '@mui/material/TextField';
+import { useEffect, useState } from 'react';
 
 import type { IncidentListFilter } from '../../api';
 
 /**
  * The state machine's terminal + non-terminal states. Hard-coded here
  * (rather than reading from the schema) because the dashboard's
- * audience picks states out of a fixed list — the TS gen-types are
- * union literals and don't iterate cleanly into a multi-select.
+ * audience picks states out of a fixed list.
  */
 const ALL_STATES = [
   'pending',
@@ -35,14 +23,93 @@ export type IncidentDashboardToolbarProps = {
   onChange: (next: IncidentListFilter) => void;
 };
 
+// Inline styles avoid pulling MUI Select/Stack into the bundle —
+// they hit a Backstage webpack edge case that broke the SPA mount.
+// See the component doc below for context.
+const toolbarStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 12,
+  padding: '12px 0',
+};
+const rowStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 16,
+  alignItems: 'flex-end',
+};
+const labelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  fontSize: 12,
+  color: '#666',
+  gap: 2,
+};
+const inputStyle: React.CSSProperties = {
+  padding: '6px 8px',
+  border: '1px solid #ccc',
+  borderRadius: 4,
+  fontSize: 14,
+};
+const chipGroupLabelStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: '#666',
+  display: 'block',
+  marginBottom: 4,
+};
+const chipRowStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+};
+const chipBase: React.CSSProperties = {
+  padding: '4px 10px',
+  borderRadius: 16,
+  fontSize: 12,
+  border: '1px solid #ccc',
+  background: '#fff',
+  cursor: 'pointer',
+};
+const chipStyle: React.CSSProperties = { ...chipBase };
+const chipActiveStyle: React.CSSProperties = {
+  ...chipBase,
+  background: '#1976d2',
+  color: '#fff',
+  borderColor: '#1976d2',
+};
+
+const FilterChip = ({
+  label,
+  active,
+  onToggle,
+}: {
+  label: string;
+  active: boolean;
+  onToggle: () => void;
+}) => (
+  <button type="button" onClick={onToggle} style={active ? chipActiveStyle : chipStyle}>
+    {label}
+  </button>
+);
+
 /**
  * IncidentDashboardToolbar renders the filter UI for the dashboard.
- * It's a pure controlled component — the parent owns the filter state
- * and routes it through useSearchParams (URL is the single source of
+ * Pure controlled component — the parent owns the filter state and
+ * routes it through useSearchParams (URL is the single source of
  * truth, see IncidentDashboard).
  *
+ * Implementation note: this component intentionally uses native HTML
+ * form controls (`<input>`, `<button>`) rather than MUI primitives.
+ * The first part-2 push tried MUI Select / Stack / Chip and hit a
+ * `module-mui` runtime error in Backstage's production webpack
+ * bundle that broke the SPA mount in the e2e suite. Native controls
+ * sidestep the bundler edge case entirely; the visual difference is
+ * acceptable for v0.2.0 — the v0.3.0 frontend hardening pass can
+ * revisit with proper MUI integration once the Backstage + MUI 9
+ * peer-dep story stabilises.
+ *
  * The search input is debounced 300ms locally so a typist doesn't
- * spam the URL + the API; multi-select dropdowns commit immediately.
+ * spam the URL + the API.
  */
 export const IncidentDashboardToolbar = ({
   filter,
@@ -50,8 +117,8 @@ export const IncidentDashboardToolbar = ({
 }: IncidentDashboardToolbarProps) => {
   const [searchDraft, setSearchDraft] = useState(filter.search ?? '');
 
-  // Sync local draft from external filter (e.g. URL navigation,
-  // back-button) so the field stays consistent with the URL.
+  // Sync local draft from external filter (URL navigation, back-button)
+  // so the field stays consistent with the URL.
   useEffect(() => {
     setSearchDraft(filter.search ?? '');
   }, [filter.search]);
@@ -66,133 +133,90 @@ export const IncidentDashboardToolbar = ({
     return () => clearTimeout(handle);
   }, [searchDraft, filter, onChange]);
 
-  const states = useMemo(() => filter.states ?? [], [filter.states]);
-  const ecosystems = useMemo(() => filter.ecosystems ?? [], [filter.ecosystems]);
+  const states = filter.states ?? [];
+  const ecosystems = filter.ecosystems ?? [];
 
-  const handleStateChange = (event: SelectChangeEvent<string[]>) => {
-    const value = event.target.value;
-    const next = typeof value === 'string' ? value.split(',') : value;
+  const toggleState = (s: string) => {
+    const next = states.includes(s) ? states.filter(x => x !== s) : [...states, s];
     onChange({ ...filter, states: next.length ? next : undefined });
   };
 
-  const handleEcosystemChange = (event: SelectChangeEvent<string[]>) => {
-    const value = event.target.value;
-    const next = typeof value === 'string' ? value.split(',') : value;
+  const toggleEcosystem = (e: string) => {
+    const next = ecosystems.includes(e) ? ecosystems.filter(x => x !== e) : [...ecosystems, e];
     onChange({ ...filter, ecosystems: next.length ? next : undefined });
   };
 
   return (
-    <Box
-      data-testid="incident-toolbar"
-      sx={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 2,
-        alignItems: 'center',
-        py: 2,
-      }}
-    >
-      <TextField
-        size="small"
-        label="Search"
-        placeholder="incident id / ioc id / component ref"
-        value={searchDraft}
-        onChange={e => setSearchDraft(e.target.value)}
-        sx={{ minWidth: 280 }}
-        slotProps={{ htmlInput: { 'data-testid': 'filter-search' } }}
-      />
+    <div data-testid="incident-toolbar" style={toolbarStyle}>
+      <div style={rowStyle}>
+        <label style={labelStyle}>
+          Search
+          <input
+            type="text"
+            value={searchDraft}
+            placeholder="incident id / ioc id / component ref"
+            onChange={e => setSearchDraft(e.target.value)}
+            data-testid="filter-search"
+            style={{ ...inputStyle, minWidth: 280 }}
+          />
+        </label>
+        <label style={labelStyle}>
+          From
+          <input
+            type="datetime-local"
+            value={filter.from ? toLocalInput(filter.from) : ''}
+            onChange={e => onChange({ ...filter, from: fromLocalInput(e.target.value) })}
+            data-testid="filter-from"
+            style={inputStyle}
+          />
+        </label>
+        <label style={labelStyle}>
+          To
+          <input
+            type="datetime-local"
+            value={filter.to ? toLocalInput(filter.to) : ''}
+            onChange={e => onChange({ ...filter, to: fromLocalInput(e.target.value) })}
+            data-testid="filter-to"
+            style={inputStyle}
+          />
+        </label>
+        <label style={labelStyle}>
+          Owner
+          <input
+            type="text"
+            value={filter.owner ?? ''}
+            placeholder="team-platform"
+            onChange={e => onChange({ ...filter, owner: e.target.value || undefined })}
+            data-testid="filter-owner"
+            style={{ ...inputStyle, minWidth: 180 }}
+          />
+        </label>
+      </div>
 
-      <FormControl size="small" sx={{ minWidth: 200 }}>
-        <InputLabel>State</InputLabel>
-        <Select
-          multiple
-          value={states}
-          onChange={handleStateChange}
-          input={<OutlinedInput label="State" />}
-          renderValue={selected => (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-              {selected.map(s => (
-                <Chip key={s} label={s} size="small" />
-              ))}
-            </Box>
-          )}
-          inputProps={{ 'data-testid': 'filter-state' }}
-        >
+      <div>
+        <span style={chipGroupLabelStyle}>State</span>
+        <div data-testid="filter-state" style={chipRowStyle}>
           {ALL_STATES.map(s => (
-            <MenuItem key={s} value={s}>
-              <Checkbox checked={states.includes(s)} />
-              <ListItemText primary={s} />
-            </MenuItem>
+            <FilterChip key={s} label={s} active={states.includes(s)} onToggle={() => toggleState(s)} />
           ))}
-        </Select>
-      </FormControl>
+        </div>
+      </div>
 
-      <FormControl size="small" sx={{ minWidth: 200 }}>
-        <InputLabel>Ecosystem</InputLabel>
-        <Select
-          multiple
-          value={ecosystems}
-          onChange={handleEcosystemChange}
-          input={<OutlinedInput label="Ecosystem" />}
-          renderValue={selected => (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-              {selected.map(s => (
-                <Chip key={s} label={s} size="small" />
-              ))}
-            </Box>
-          )}
-          inputProps={{ 'data-testid': 'filter-ecosystem' }}
-        >
+      <div>
+        <span style={chipGroupLabelStyle}>Ecosystem</span>
+        <div data-testid="filter-ecosystem" style={chipRowStyle}>
           {ALL_ECOSYSTEMS.map(e => (
-            <MenuItem key={e} value={e}>
-              <Checkbox checked={ecosystems.includes(e)} />
-              <ListItemText primary={e} />
-            </MenuItem>
+            <FilterChip key={e} label={e} active={ecosystems.includes(e)} onToggle={() => toggleEcosystem(e)} />
           ))}
-        </Select>
-      </FormControl>
-
-      <TextField
-        size="small"
-        label="From"
-        type="datetime-local"
-        value={filter.from ? toLocalInput(filter.from) : ''}
-        onChange={e => onChange({ ...filter, from: fromLocalInput(e.target.value) })}
-        slotProps={{
-          inputLabel: { shrink: true },
-          htmlInput: { 'data-testid': 'filter-from' },
-        }}
-      />
-
-      <TextField
-        size="small"
-        label="To"
-        type="datetime-local"
-        value={filter.to ? toLocalInput(filter.to) : ''}
-        onChange={e => onChange({ ...filter, to: fromLocalInput(e.target.value) })}
-        slotProps={{
-          inputLabel: { shrink: true },
-          htmlInput: { 'data-testid': 'filter-to' },
-        }}
-      />
-
-      <TextField
-        size="small"
-        label="Owner"
-        placeholder="team-platform"
-        value={filter.owner ?? ''}
-        onChange={e => onChange({ ...filter, owner: e.target.value || undefined })}
-        sx={{ minWidth: 180 }}
-        slotProps={{ htmlInput: { 'data-testid': 'filter-owner' } }}
-      />
-    </Box>
+        </div>
+      </div>
+    </div>
   );
 };
 
 // datetime-local inputs work with `YYYY-MM-DDTHH:mm`, no timezone.
 // Engine wants RFC3339. Convert in both directions.
 function toLocalInput(rfc3339: string): string {
-  // Strip seconds + Z; the input doesn't accept the trailing Z form.
   const d = new Date(rfc3339);
   const pad = (n: number) => String(n).padStart(2, '0');
   return (
@@ -203,7 +227,6 @@ function toLocalInput(rfc3339: string): string {
 
 function fromLocalInput(local: string): string | undefined {
   if (!local) return undefined;
-  // datetime-local inputs are local-time; serialise back to UTC RFC3339.
   return new Date(local).toISOString();
 }
 
