@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/oklog/ulid/v2"
@@ -9,6 +10,69 @@ import (
 	"github.com/ugurcan-aytar/rampart/engine/internal/domain"
 	"github.com/ugurcan-aytar/rampart/engine/internal/matcher"
 )
+
+// iocLookupKey extracts the (ecosystem, name) pair the matcher's bulk
+// hot path (storage.ListSBOMPackages) keys on. Returns ok=false for an
+// IoC variant we cannot bulk-lookup — the caller should treat that as
+// "no matches" rather than fall through to a slow scan.
+//
+// The three branches mirror matcher.Evaluate's switch:
+//   - packageVersion / packageRange carry name explicitly
+//   - publisherAnomaly's AnomalyBody encodes "<ecosystem>:<name>" in
+//     PackageRef (per ADR-0014). The legacy maintainer-keyed
+//     PublisherAnomaly variant has no package binding and is a no-op
+//     in matcher.Evaluate today, so it returns ok=false here too.
+func iocLookupKey(ioc domain.IoC) (ecosystem, name string, ok bool) {
+	switch ioc.Kind {
+	case domain.IoCKindPackageVersion:
+		if ioc.PackageVersion == nil {
+			return "", "", false
+		}
+		return ioc.Ecosystem, ioc.PackageVersion.Name, true
+	case domain.IoCKindPackageRange:
+		if ioc.PackageRange == nil {
+			return "", "", false
+		}
+		return ioc.Ecosystem, ioc.PackageRange.Name, true
+	case domain.IoCKindPublisherAnomaly:
+		if ioc.AnomalyBody == nil {
+			return "", "", false
+		}
+		ref := ioc.AnomalyBody.PackageRef
+		idx := strings.Index(ref, ":")
+		if idx <= 0 || idx == len(ref)-1 {
+			return "", "", false
+		}
+		return ref[:idx], ref[idx+1:], true
+	}
+	return "", "", false
+}
+
+// matchPackagesAgainstIoC runs the IoC's predicate against every
+// (component, package) pair returned by storage.ListSBOMPackages and
+// returns the distinct component refs that fired. The matcher is
+// re-used unchanged: each row is wrapped in a one-package synthetic
+// SBOM so packageVersion / packageRange / anomalyBody all flow
+// through the same evaluator.
+func matchPackagesAgainstIoC(ioc domain.IoC, ecosystem string, pkgs []domain.SBOMPackageRef) []string {
+	seen := map[string]struct{}{}
+	out := []string{}
+	for _, p := range pkgs {
+		if _, dup := seen[p.ComponentRef]; dup {
+			continue
+		}
+		synthetic := domain.SBOM{
+			Ecosystem: ecosystem,
+			Packages:  []domain.PackageVersion{p.Package},
+		}
+		if !matcher.Evaluate(ioc, synthetic).Matched {
+			continue
+		}
+		seen[p.ComponentRef] = struct{}{}
+		out = append(out, p.ComponentRef)
+	}
+	return out
+}
 
 // isNonTerminal reports whether an incident is still actionable. Closed
 // and Dismissed are terminal: a fresh match against the same (IoC, ref)
@@ -116,35 +180,29 @@ func (s *Server) retroactiveMatch(ctx context.Context, sbom domain.SBOM) ([]matc
 	return pairs, iocIDs, nil
 }
 
-// forwardMatch walks every stored SBOM and returns the pairs that fire
-// against `ioc`. Called from SubmitIoC after a new IoC is persisted.
-// Dedupes by ComponentRef: if a component has multiple historical
-// SBOMs (new commits over time), only the first match produces a pair.
+// forwardMatch returns the (component) pairs that fire against `ioc`.
+// Called from SubmitIoC after a new IoC is persisted.
+//
+// Issues a single bulk lookup against sbom_packages by (ecosystem,
+// name) instead of looping ListSBOMsByComponent across every
+// component. matcher.Evaluate stays in memory — the bulk lookup just
+// shrinks the candidate set from `every package in every SBOM` to
+// `every (component, version) row that matches the IoC's
+// (ecosystem, name)`. Dedupes by ComponentRef so a monorepo with
+// multiple historical SBOMs still produces one pair per component.
 func (s *Server) forwardMatch(ctx context.Context, ioc domain.IoC) ([]matchPair, []string, error) {
-	comps, err := s.storage.ListComponents(ctx)
+	eco, name, ok := iocLookupKey(ioc)
+	if !ok {
+		return nil, nil, nil
+	}
+	pkgs, err := s.storage.ListSBOMPackages(ctx, eco, name)
 	if err != nil {
 		return nil, nil, err
 	}
-	seen := map[string]struct{}{}
-	var pairs []matchPair
-	var matchedComponents []string
-	for _, c := range comps {
-		sboms, err := s.storage.ListSBOMsByComponent(ctx, c.Ref)
-		if err != nil {
-			return nil, nil, err
-		}
-		for _, sbom := range sboms {
-			if !matcher.Evaluate(ioc, sbom).Matched {
-				continue
-			}
-			if _, dup := seen[c.Ref]; dup {
-				continue
-			}
-			seen[c.Ref] = struct{}{}
-			pairs = append(pairs, matchPair{IoCID: ioc.ID, ComponentRef: c.Ref})
-			matchedComponents = append(matchedComponents, c.Ref)
-			break // one SBOM is enough to pin the blast radius for this component
-		}
+	matchedComponents := matchPackagesAgainstIoC(ioc, eco, pkgs)
+	pairs := make([]matchPair, 0, len(matchedComponents))
+	for _, ref := range matchedComponents {
+		pairs = append(pairs, matchPair{IoCID: ioc.ID, ComponentRef: ref})
 	}
 	return pairs, matchedComponents, nil
 }
