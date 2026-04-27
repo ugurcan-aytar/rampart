@@ -18,38 +18,51 @@ import (
 // Cursor pagination is Phase 2; the params are accepted and ignored so
 // clients that already send them don't break.
 func (s *Server) ListIncidents(w http.ResponseWriter, r *http.Request, params gen.ListIncidentsParams) {
-	incs, err := s.storage.ListIncidents(r.Context())
+	filter := domain.IncidentFilter{}
+	if params.State != nil {
+		for _, st := range *params.State {
+			filter.States = append(filter.States, domain.IncidentState(st))
+		}
+	}
+	if params.Ecosystem != nil {
+		for _, eco := range *params.Ecosystem {
+			if eco != "" {
+				filter.Ecosystems = append(filter.Ecosystems, eco)
+			}
+		}
+	}
+	// `from` wins when both `from` and `since` are supplied — `since`
+	// is the v0.2.0-era alias preserved for backward compat.
+	switch {
+	case params.From != nil:
+		t := *params.From
+		filter.From = &t
+	case params.Since != nil:
+		t := *params.Since
+		filter.From = &t
+	}
+	if params.To != nil {
+		t := *params.To
+		filter.To = &t
+	}
+	if params.Search != nil {
+		filter.Search = *params.Search
+	}
+	if params.Owner != nil {
+		filter.Owner = *params.Owner
+	}
+	if params.Limit != nil {
+		filter.Limit = *params.Limit
+	}
+
+	incs, err := s.storage.ListIncidentsFiltered(r.Context(), filter)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "STORAGE_ERROR", err.Error())
 		return
 	}
 
-	filtered := incs[:0]
+	items := make([]gen.Incident, 0, len(incs))
 	for _, inc := range incs {
-		if params.State != nil && domain.IncidentState(*params.State) != inc.State {
-			continue
-		}
-		if params.Since != nil && inc.OpenedAt.Before(*params.Since) {
-			continue
-		}
-		if params.Ecosystem != nil && *params.Ecosystem != "" {
-			// Ecosystem filter routes through the linked IoC; join on the fly.
-			// A listing endpoint doing a join every call would be a problem in
-			// production, but Phase 1 memory storage with <100 incidents is
-			// fine. Phase 2 storage builds the right index.
-			ioc, err := s.storage.GetIoC(r.Context(), inc.IoCID)
-			if err != nil || ioc == nil || ioc.Ecosystem != *params.Ecosystem {
-				continue
-			}
-		}
-		filtered = append(filtered, inc)
-	}
-	sort.Slice(filtered, func(i, j int) bool {
-		return filtered[i].OpenedAt.After(filtered[j].OpenedAt)
-	})
-
-	items := make([]gen.Incident, 0, len(filtered))
-	for _, inc := range filtered {
 		items = append(items, toGenIncident(inc))
 	}
 	writeJSON(w, http.StatusOK, gen.IncidentPage{Items: items})

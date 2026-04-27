@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -411,6 +412,157 @@ func (s *Store) ListIncidents(ctx context.Context) ([]domain.Incident, error) {
 		out = append(out, *i)
 	}
 	return out, rows.Err()
+}
+
+// ListIncidentsFiltered runs the indexed dimensions in the SQL WHERE
+// clause, then post-filters the cross-table dimensions (ecosystem
+// requires joining IoC; owner requires joining Component) in Go.
+//
+// At v0.2.0 traffic shape (≤ a few thousand incidents per page) the
+// post-filter cost is negligible. A future denormalised view could
+// move ecosystem + owner into the WHERE; the contract stays the same.
+func (s *Store) ListIncidentsFiltered(ctx context.Context, f domain.IncidentFilter) ([]domain.Incident, error) {
+	const noLimitSentinel = 1 << 31
+	limit := f.Limit
+	if limit <= 0 {
+		limit = noLimitSentinel
+	}
+
+	// Build the indexed WHERE in a stable parameter order. State[] is
+	// passed as a TEXT[] and matched with `= ANY(...)`; nil states
+	// returns true via the COALESCE-style ($1::text[] IS NULL).
+	stateArg := []string{}
+	for _, st := range f.States {
+		stateArg = append(stateArg, string(st))
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, ioc_id, state, opened_at, last_transitioned_at, affected_components_snapshot
+		FROM incidents
+		WHERE ($1::text[] IS NULL OR state = ANY($1))
+		  AND ($2::timestamptz IS NULL OR opened_at >= $2)
+		  AND ($3::timestamptz IS NULL OR opened_at <= $3)
+		ORDER BY opened_at DESC`,
+		nullableStringSlice(stateArg), f.From, f.To,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: ListIncidentsFiltered: %w", err)
+	}
+	defer rows.Close()
+
+	indexed := []domain.Incident{}
+	for rows.Next() {
+		inc, err := scanIncident(rows)
+		if err != nil {
+			return nil, err
+		}
+		indexed = append(indexed, *inc)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Post-filter the cross-table dimensions. We hydrate the joined
+	// IoCs / Components only for the candidates that survive the
+	// indexed scan, so the worst case is a single-page join.
+	out := make([]domain.Incident, 0, len(indexed))
+	iocCache := map[string]*domain.IoC{}
+	componentCache := map[string]*domain.Component{}
+	for _, inc := range indexed {
+		if !s.matchesEcosystemFilter(ctx, inc, f, iocCache) {
+			continue
+		}
+		if !matchesSearchFilterPg(inc, f) {
+			continue
+		}
+		if !s.matchesOwnerFilter(ctx, inc, f, componentCache) {
+			continue
+		}
+		out = append(out, inc)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
+}
+
+func (s *Store) matchesEcosystemFilter(ctx context.Context, inc domain.Incident, f domain.IncidentFilter, cache map[string]*domain.IoC) bool {
+	if len(f.Ecosystems) == 0 {
+		return true
+	}
+	ioc, ok := cache[inc.IoCID]
+	if !ok {
+		fetched, err := s.GetIoC(ctx, inc.IoCID)
+		if err != nil {
+			cache[inc.IoCID] = nil
+		} else {
+			cache[inc.IoCID] = fetched
+		}
+		ioc = cache[inc.IoCID]
+	}
+	if ioc == nil {
+		return false
+	}
+	for _, eco := range f.Ecosystems {
+		if eco != "" && ioc.Ecosystem == eco {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) matchesOwnerFilter(ctx context.Context, inc domain.Incident, f domain.IncidentFilter, cache map[string]*domain.Component) bool {
+	if f.Owner == "" {
+		return true
+	}
+	for _, ref := range inc.AffectedComponentsSnapshot {
+		c, ok := cache[ref]
+		if !ok {
+			fetched, err := s.GetComponent(ctx, ref)
+			if err != nil {
+				cache[ref] = nil
+			} else {
+				cache[ref] = fetched
+			}
+			c = cache[ref]
+		}
+		if c == nil {
+			continue
+		}
+		if c.Owner == f.Owner {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesSearchFilterPg mirrors the memory backend's matchesSearchFilter
+// but lives here to keep the postgres file self-contained (no shared
+// helper between backends — packages don't depend on each other).
+func matchesSearchFilterPg(inc domain.Incident, f domain.IncidentFilter) bool {
+	if f.Search == "" {
+		return true
+	}
+	q := strings.ToLower(f.Search)
+	if strings.Contains(strings.ToLower(inc.ID), q) ||
+		strings.Contains(strings.ToLower(inc.IoCID), q) {
+		return true
+	}
+	for _, ref := range inc.AffectedComponentsSnapshot {
+		if strings.Contains(strings.ToLower(ref), q) {
+			return true
+		}
+	}
+	return false
+}
+
+// nullableStringSlice returns nil for empty slices so the
+// `($1::text[] IS NULL OR ...)` guard short-circuits to "match all".
+func nullableStringSlice(s []string) any {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
 }
 
 func scanIncident(r rowScanner) (*domain.Incident, error) {

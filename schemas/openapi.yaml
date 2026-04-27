@@ -242,16 +242,58 @@ paths:
     get:
       tags: [incidents]
       operationId: ListIncidents
-      summary: List incidents, filterable by state / ecosystem / since.
+      summary: List incidents, filterable across multiple dimensions.
+      description: |
+        Filter dimensions are AND'd together; multi-value filters
+        (`state`, `ecosystem`) are OR'd within the dimension. The
+        `search` filter is a substring match across `incident.id`,
+        `incident.iocId`, and any entry in
+        `incident.affectedComponentsSnapshot`. The `owner` filter
+        narrows to incidents whose snapshot includes at least one
+        component with that exact `owner`.
+
+        Operators on bigger fleets should rely on the indexed
+        dimensions (`state`, `from`, `to`) first; `search` and `owner`
+        are post-filtered after the indexed scan.
+
+        `since` is a v0.2.0-era alias for `from` and stays for
+        backward compat — `from` wins when both are supplied.
       parameters:
         - name: state
           in: query
-          schema: { $ref: '#/components/schemas/IncidentState' }
+          description: One or more incident states to include.
+          schema:
+            type: array
+            items: { $ref: '#/components/schemas/IncidentState' }
+          style: form
+          explode: true
         - name: ecosystem
           in: query
+          description: One or more ecosystems to include.
+          schema:
+            type: array
+            items: { type: string }
+          style: form
+          explode: true
+        - name: from
+          in: query
+          description: Inclusive lower bound on `openedAt`.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: Inclusive upper bound on `openedAt`.
+          schema: { type: string, format: date-time }
+        - name: search
+          in: query
+          description: Substring match across incident_id / ioc_id / component_ref.
+          schema: { type: string }
+        - name: owner
+          in: query
+          description: Exact match against an affected component's owner.
           schema: { type: string }
         - name: since
           in: query
+          description: Deprecated alias for `from`. `from` wins when both are set.
           schema: { type: string, format: date-time }
         - $ref: '#/components/parameters/Cursor'
         - $ref: '#/components/parameters/Limit'

@@ -146,7 +146,23 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List incidents, filterable by state / ecosystem / since. */
+        /**
+         * List incidents, filterable across multiple dimensions.
+         * @description Filter dimensions are AND'd together; multi-value filters
+         *     (`state`, `ecosystem`) are OR'd within the dimension. The
+         *     `search` filter is a substring match across `incident.id`,
+         *     `incident.iocId`, and any entry in
+         *     `incident.affectedComponentsSnapshot`. The `owner` filter
+         *     narrows to incidents whose snapshot includes at least one
+         *     component with that exact `owner`.
+         *
+         *     Operators on bigger fleets should rely on the indexed
+         *     dimensions (`state`, `from`, `to`) first; `search` and `owner`
+         *     are post-filtered after the indexed scan.
+         *
+         *     `since` is a v0.2.0-era alias for `from` and stays for
+         *     backward compat — `from` wins when both are supplied.
+         */
         get: operations["ListIncidents"];
         put?: never;
         post?: never;
@@ -1090,8 +1106,19 @@ export interface operations {
     ListIncidents: {
         parameters: {
             query?: {
-                state?: components["schemas"]["IncidentState"];
-                ecosystem?: string;
+                /** @description One or more incident states to include. */
+                state?: components["schemas"]["IncidentState"][];
+                /** @description One or more ecosystems to include. */
+                ecosystem?: string[];
+                /** @description Inclusive lower bound on `openedAt`. */
+                from?: string;
+                /** @description Inclusive upper bound on `openedAt`. */
+                to?: string;
+                /** @description Substring match across incident_id / ioc_id / component_ref. */
+                search?: string;
+                /** @description Exact match against an affected component's owner. */
+                owner?: string;
+                /** @description Deprecated alias for `from`. `from` wins when both are set. */
                 since?: string;
                 /** @description Opaque pagination cursor returned from the previous page. */
                 cursor?: components["parameters"]["Cursor"];

@@ -34,6 +34,25 @@ var (
 	ErrUnknownState      = errors.New("unknown incident state")
 )
 
+// IncidentFilter scopes ListIncidentsFiltered. Empty fields = no
+// filter on that dimension. State + Ecosystem are OR'd within the
+// dimension; all dimensions are AND'd together.
+//
+// Search is a substring match across `Incident.ID`, `Incident.IoCID`,
+// and any entry in `Incident.AffectedComponentsSnapshot`. Owner is an
+// exact match against the owner of any affected component (post-
+// filtered after the indexed scan because incidents don't carry owner
+// directly — it lives on the joined Component).
+type IncidentFilter struct {
+	States     []IncidentState
+	Ecosystems []string
+	From       *time.Time
+	To         *time.Time
+	Search     string
+	Owner      string
+	Limit      int
+}
+
 var allowedTransitions = map[IncidentState][]IncidentState{
 	StatePending:      {StateTriaged, StateDismissed},
 	StateTriaged:      {StateAcknowledged, StateDismissed},

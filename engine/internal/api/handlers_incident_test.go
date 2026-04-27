@@ -101,6 +101,100 @@ func TestListIncidents_FilterByState(t *testing.T) {
 	_ = store // silence unused
 }
 
+// TestListIncidents_FilterCombinations exercises the multi-dimension
+// filter expansion from the E3 backend split: multi-state, ecosystem
+// array, time range, search substring, owner exact, limit cap, plus
+// the legacy `since` alias for `from`.
+func TestListIncidents_FilterCombinations(t *testing.T) {
+	h, _, ids := seedIncidentScenario(t)
+
+	// Transition one incident so we can exercise multi-state.
+	transition(t, h, ids[0], domain.StateTriaged)
+
+	t.Run("multi-state OR returns both", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/v1/incidents?state=pending&state=triaged", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		require.Equal(t, http.StatusOK, rr.Code)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.Len(t, page.Items, 3)
+	})
+
+	t.Run("ecosystem array narrows to npm", func(t *testing.T) {
+		// Fixture seeds an npm IoC; gomod array should produce 0.
+		req := httptest.NewRequest(http.MethodGet, "/v1/incidents?ecosystem=npm", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.Len(t, page.Items, 3, "all 3 fixture incidents are npm")
+
+		req2 := httptest.NewRequest(http.MethodGet, "/v1/incidents?ecosystem=gomod", nil)
+		rr2 := httptest.NewRecorder()
+		h.ServeHTTP(rr2, req2)
+		var page2 gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr2.Body.Bytes(), &page2))
+		require.Empty(t, page2.Items)
+	})
+
+	t.Run("search substring matches incident id", func(t *testing.T) {
+		// Use the last 6 chars of the ULID — those are the random
+		// suffix; the time-prefix is shared across same-millisecond
+		// fixture incidents so an early-prefix search would match all.
+		needle := ids[0][len(ids[0])-6:]
+		req := httptest.NewRequest(http.MethodGet,
+			"/v1/incidents?search="+needle, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.Len(t, page.Items, 1)
+		require.Equal(t, ids[0], page.Items[0].Id)
+	})
+
+	t.Run("search substring matches ioc id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/incidents?search=axios", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.Len(t, page.Items, 3)
+	})
+
+	t.Run("owner narrows to component-keyed match", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet,
+			"/v1/incidents?owner=team-platform", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.NotEmpty(t, page.Items, "fixture seeds team-platform components")
+	})
+
+	t.Run("limit caps result count", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/incidents?limit=1", nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.Len(t, page.Items, 1)
+	})
+
+	t.Run("since is honoured as a from alias", func(t *testing.T) {
+		// All fixtures opened recently; a `since` in the future returns 0.
+		future := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		req := httptest.NewRequest(http.MethodGet,
+			"/v1/incidents?since="+future, nil)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		var page gen.IncidentPage
+		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &page))
+		require.Empty(t, page.Items)
+	})
+}
+
 func TestGetIncident_Hydrated(t *testing.T) {
 	h, _, ids := seedIncidentScenario(t)
 

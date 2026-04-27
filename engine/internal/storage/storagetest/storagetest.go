@@ -26,6 +26,7 @@ func Run(t *testing.T, newStore func() storage.Storage) {
 	t.Run("Publisher", func(t *testing.T) { testPublisher(t, newStore) })
 	t.Run("PublisherSnapshot", func(t *testing.T) { testPublisherSnapshot(t, newStore) })
 	t.Run("Anomaly", func(t *testing.T) { testAnomaly(t, newStore) })
+	t.Run("IncidentFilter", func(t *testing.T) { testIncidentFilter(t, newStore) })
 }
 
 func testComponent(t *testing.T, newStore func() storage.Storage) {
@@ -427,4 +428,96 @@ func testAnomaly(t *testing.T, newStore func() storage.Storage) {
 	require.Len(t, limited, 1)
 
 	_ = id3 // referenced via the `all` count assertion
+}
+
+func testIncidentFilter(t *testing.T, newStore func() storage.Storage) {
+	t.Helper()
+	ctx := context.Background()
+	s := newStore()
+	defer s.Close()
+
+	now := time.Now().UTC().Truncate(time.Microsecond)
+
+	// Three components, two owners.
+	require.NoError(t, s.UpsertComponent(ctx, domain.Component{
+		Ref: "kind:Component/default/billing", Kind: "Component",
+		Namespace: "default", Name: "billing", Owner: "team-payments",
+	}))
+	require.NoError(t, s.UpsertComponent(ctx, domain.Component{
+		Ref: "kind:Component/default/web-app", Kind: "Component",
+		Namespace: "default", Name: "web-app", Owner: "team-platform",
+	}))
+	require.NoError(t, s.UpsertComponent(ctx, domain.Component{
+		Ref: "kind:Component/default/reporting", Kind: "Component",
+		Namespace: "default", Name: "reporting", Owner: "team-data",
+	}))
+
+	// Two IoCs in different ecosystems.
+	require.NoError(t, s.UpsertIoC(ctx, domain.IoC{
+		ID: "ioc-npm", Kind: domain.IoCKindPackageVersion, Severity: domain.SeverityHigh,
+		Ecosystem: "npm", Source: "test", PublishedAt: now,
+		PackageVersion: &domain.IoCPackageVersion{Name: "axios", Version: "1.11.0"},
+	}))
+	require.NoError(t, s.UpsertIoC(ctx, domain.IoC{
+		ID: "ioc-gomod", Kind: domain.IoCKindPackageVersion, Severity: domain.SeverityCritical,
+		Ecosystem: "gomod", Source: "test", PublishedAt: now,
+		PackageVersion: &domain.IoCPackageVersion{Name: "github.com/spf13/cobra", Version: "1.8.0"},
+	}))
+
+	mkInc := func(id, iocID string, state domain.IncidentState, opened time.Time, snapshot []string) {
+		require.NoError(t, s.UpsertIncident(ctx, domain.Incident{
+			ID: id, IoCID: iocID, State: state, OpenedAt: opened, LastTransitionedAt: opened,
+			AffectedComponentsSnapshot: snapshot,
+		}))
+	}
+
+	mkInc("inc-A-pending-old", "ioc-npm", domain.StatePending, now.Add(-3*time.Hour),
+		[]string{"kind:Component/default/billing"})
+	mkInc("inc-B-triaged-mid", "ioc-npm", domain.StateTriaged, now.Add(-90*time.Minute),
+		[]string{"kind:Component/default/web-app"})
+	mkInc("inc-C-pending-recent", "ioc-gomod", domain.StatePending, now.Add(-30*time.Minute),
+		[]string{"kind:Component/default/reporting"})
+
+	// 1) No filter → 3 incidents, newest-first.
+	all, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{})
+	require.NoError(t, err)
+	require.Len(t, all, 3)
+	require.Equal(t, "inc-C-pending-recent", all[0].ID, "newest-first")
+
+	// 2) State multi-select.
+	statePending, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{
+		States: []domain.IncidentState{domain.StatePending},
+	})
+	require.NoError(t, err)
+	require.Len(t, statePending, 2)
+
+	// 3) Ecosystem multi-select (post-filter via joined IoC).
+	gomodOnly, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{
+		Ecosystems: []string{"gomod"},
+	})
+	require.NoError(t, err)
+	require.Len(t, gomodOnly, 1)
+	require.Equal(t, "inc-C-pending-recent", gomodOnly[0].ID)
+
+	// 4) Time range — only the mid + recent incidents.
+	from := now.Add(-2 * time.Hour)
+	since2h, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{From: &from})
+	require.NoError(t, err)
+	require.Len(t, since2h, 2)
+
+	// 5) Search across IoC id substring.
+	searchGomod, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{Search: "gomod"})
+	require.NoError(t, err)
+	require.Len(t, searchGomod, 1)
+
+	// 6) Owner exact (post-filter via joined Component).
+	teamPlatform, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{Owner: "team-platform"})
+	require.NoError(t, err)
+	require.Len(t, teamPlatform, 1)
+	require.Equal(t, "inc-B-triaged-mid", teamPlatform[0].ID)
+
+	// 7) Limit.
+	limited, err := s.ListIncidentsFiltered(ctx, domain.IncidentFilter{Limit: 1})
+	require.NoError(t, err)
+	require.Len(t, limited, 1)
 }
