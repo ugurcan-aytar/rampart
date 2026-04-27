@@ -34,6 +34,27 @@ drive the control set:
    `rampart-engine:v0.1.2` image to ghcr.io. *Controls:* cosign
    keyless signing on every artifact + SBOM attestation. Verification
    recipe below.
+4. **Unauthenticated API access** (added v0.2.0). The engine ships JWT
+   middleware on `/v1/*` mutation routes. *Controls:* see
+   "Authentication" + "CORS" below. Auth is opt-in via
+   `RAMPART_AUTH_ENABLED=true` for backward-compat with v0.1.x; every
+   production deployment is expected to flip it on. Failed auth emits
+   `AuthRejected` events on `/v1/stream` for replay / brute-force
+   detection.
+5. **Postgres credential handling** (added v0.2.0). The engine's
+   `RAMPART_DB_DSN` carries the Postgres password in the connection
+   string. *Controls:* the DSN is read once at boot from env, never
+   logged, never persisted into the storage layer. Operators are
+   expected to source the env from a secret manager (Kubernetes
+   Secret, Docker swarm secret, Vault), not from a plain
+   `docker-compose.yml`.
+6. **Outbound API rate limits** (added v0.2.0, Theme F1). The
+   publisher metadata refresh path calls `registry.npmjs.org` and
+   `api.github.com`. *Controls:* per-upstream token-bucket rate
+   limiter, exponential backoff for 5xx, `Retry-After` honouring
+   for 429s. Enforced inside `engine/publisher/internal/httpx`.
+   `GITHUB_TOKEN` is optional; without it, the GitHub side caps at
+   the unauthenticated 60 req/h.
 
 ## Controls in force
 
@@ -73,6 +94,73 @@ drive the control set:
   `defaultSemverRangePrefix=""` settings are re-checked by
   `backstage.yml` on every PR. Drift is a CI failure, not a code
   review.
+
+### Authentication (v0.2.0+, Theme A1)
+
+- **JWT middleware on `/v1/*`.** When `RAMPART_AUTH_ENABLED=true`,
+  every mutation route (`POST` / `PUT` / `DELETE` / `PATCH`) requires
+  a valid Bearer token. Read-only routes accept either authenticated
+  or anonymous depending on per-deployment configuration. Algorithm
+  is `HS256` (shared secret) or `RS256` (PEM-encoded public key);
+  `RAMPART_AUTH_AUDIENCE`, when set, is asserted against the `aud`
+  claim.
+- **Token issuance.** `POST /v1/auth/token` mints internal/test
+  tokens (HS256, 1-hour TTL by default). Production deployments
+  typically front the engine with an external IdP that issues the
+  JWTs; the engine just verifies. See
+  [`docs/operations/auth-providers.md`](./docs/operations/auth-providers.md)
+  for templates (GitHub OAuth, Azure AD, Okta, generic OIDC).
+- **Scope enforcement.** Tokens carry a `scope` claim (`read` /
+  `write` / `admin`). Mutation routes require `write`; admin-only
+  routes (e.g. token issuance) require `admin`.
+- **`AuthRejected` events.** Every rejected token is published on
+  `/v1/stream` as an `AuthRejected` event with the reason
+  (`expired`, `invalid_signature`, `audience_mismatch`,
+  `scope_insufficient`). Operators tail this for replay / brute-
+  force detection without reaching into engine logs.
+- **Default off.** `RAMPART_AUTH_ENABLED` defaults `false` to
+  preserve v0.1.x demo behaviour. Production deployments are
+  expected to flip it on; the v0.2.0 migration guide documents
+  the env-var contract.
+
+### CORS (v0.2.0+, Theme A2)
+
+- **Env allow-list.** `RAMPART_CORS_ORIGINS` is a comma-delimited
+  list of origins permitted to call the engine from a browser. Empty
+  (default) means deny-all cross-origin — the same-origin Backstage
+  proxy path is unaffected.
+- **`RAMPART_CORS_ALLOW_ALL=true`** echoes the request origin back
+  as the `Access-Control-Allow-Origin` header (effectively wildcard).
+  Exists for the v0.1.x demo path; the engine emits a warn log on
+  every boot when this flag is on. Production deployments should
+  use the explicit allow-list instead.
+- **Backstage-fronted is the recommended posture.** When the
+  Backstage backend plugin proxies the engine, no CORS config is
+  needed — frontend requests are same-origin against Backstage. See
+  [ADR-0012](./docs/decisions/0012-auth-boundary-at-engine.md) for
+  why the engine is the auth boundary, not the proxy.
+
+### Service-to-service auth (v0.2.0+, ADR-0012)
+
+- **Backstage backend plugin token forwarding.** The
+  `rampart-backend` Backstage plugin mints a service-to-service JWT
+  at startup (HS256, signed with the shared `RAMPART_AUTH_SIGNING_KEY`)
+  and attaches it as `Authorization: Bearer <token>` on every
+  proxied request. The engine sees one identity (the Backstage
+  service) regardless of which Backstage user originated the call —
+  the user identity is captured separately in event metadata.
+- **Why one boundary, not two.** Per ADR-0012: enforcing auth at
+  both Backstage's `/api/rampart/*` proxy AND the engine's `/v1/*`
+  middleware created a double-auth pattern that conflicted with
+  Theme A3's planned guest-auth removal. The engine is the single
+  authoritative auth boundary; Backstage proxy routes are
+  configured `allow: 'unauthenticated'`.
+- **Token rotation.** The Backstage plugin re-mints its token on
+  every restart. There's no long-lived token persisted to disk;
+  rotation is just a Backstage rolling restart. Operators with
+  shorter rotation requirements should swap the Backstage plugin's
+  token-mint helper for an external IdP integration (templates in
+  `docs/operations/auth-providers.md`).
 
 ### Release
 
@@ -119,24 +207,38 @@ cosign verify-attestation \
 
 ## Known gaps
 
-- **Auth is guest in the demo stack.** Backstage ships with
-  `auth.providers.guest` enabled; swap in a real provider (OIDC,
-  GitHub, etc.) before exposing the stack outside a trust boundary.
-  See [README Production deployment notes](./README.md#production-deployment-notes).
-- **Engine CORS is permissive.** The demo middleware allows any
-  origin so the Backstage frontend (on `:3000`) can hit the engine
-  (on `:8080`) directly. Production deploys route the frontend
-  through the `rampart-backend` proxy; CORS tightens then. Phase 2
-  ships this wiring.
-- **In-memory storage has no encryption-at-rest.** It also has no
-  persistence — the point is moot until Postgres ships (Phase 2).
-- **No first-party auth on `/v1/*` endpoints.** Engine assumes it
-  runs behind a trusted reverse proxy. Production deployments should
-  put an auth-enforcing proxy (Envoy + OIDC, nginx + auth subrequest,
-  etc.) in front of the engine container.
-- **pinact SHA pinning on GitHub Actions** — Phase 1 uses immutable
+- **Backstage frontend auth is guest in the demo stack.** Backstage
+  ships with `auth.providers.guest` enabled in the demo
+  `app-config.yaml`. Theme A3 (replace guest with a real OAuth
+  provider) is deferred from v0.2.0. Operators registering their
+  own GitHub OAuth App should follow the v0.2.1 OAuth setup guide;
+  templates for GitHub / Azure AD / Okta / generic OIDC live at
+  [`docs/operations/auth-providers.md`](./docs/operations/auth-providers.md).
+  Per ADR-0012 the engine itself enforces auth — the Backstage
+  guest setting only affects who reaches the proxy, not who the
+  engine accepts.
+- **Postgres encryption-at-rest is the operator's responsibility.**
+  The engine writes plain rows to whatever Postgres instance the
+  DSN points at; operators who need at-rest encryption use cloud
+  Postgres (RDS, Cloud SQL, Azure Database — all support
+  transparent encryption) or a self-managed Postgres with disk-
+  level encryption. The demo `docker-compose.yml` is not
+  encrypted — it's a demo.
+- **In-memory storage** (`RAMPART_STORAGE=memory`) has no
+  persistence and no encryption — by design, for tests and demos.
+  Production deployments use Postgres.
+- **pinact SHA pinning on GitHub Actions** — v0.2.0 uses immutable
   semver tags (`actions/checkout@v4.2.2`); full commit SHA pins are
-  a Phase 2 sweep.
+  a v0.3.0 sweep.
+- **Theme A3 OAuth provider** is deferred. v0.2.0 ships the engine
+  auth boundary (Theme A1) + CORS allow-list (Theme A2); Backstage
+  guest auth removal lands in v0.2.1.
+- **Outbound publisher API calls** (Theme F1) leak the deployment's
+  IP to `registry.npmjs.org` and `api.github.com` if the publisher
+  scheduler is enabled. Operators with strict egress policies
+  should disable the scheduler (`RAMPART_PUBLISHER_ENABLED=false`,
+  the default) or front the engine's outbound traffic with a known
+  egress proxy.
 
 ## What rampart will *not* do
 
