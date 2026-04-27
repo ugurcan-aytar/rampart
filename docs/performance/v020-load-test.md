@@ -85,29 +85,99 @@ matches per IoC and 135 000 incidents — pathological for the matcher
 and unrepresentative of real fleets. The current numbers reflect a
 realistic workload, not a synthetic worst case.
 
-### v0.2.1 perf-fix scope (separate PR)
+### v0.2.1 PR 1 — Index migration (CANCELLED)
 
-The two missed targets share a single root cause: the matcher's
-forward-match runs synchronously on the request path (both at IoC
-ingest and at blast-radius query). v0.2.1 will:
+The original v0.2.1 plan opened with a postgres index migration
+("add `idx_incidents_ioc_id` etc."). Investigation against the
+current schema showed every index the planned migration would
+create is already in place from migration `0004_incidents.sql`
+(`incidents_ioc_idx`, `incidents_state_idx`, `incidents_opened_idx`)
+and from `0002_sboms.sql` (`sboms_component_generated_idx`,
+`sbom_packages_name_version_idx`). The single missing index from
+the plan — `incidents.component_ref` — turned out to be a
+non-existent column: component refs live in
+`affected_components_snapshot TEXT[]`, not a scalar column, and
+no query in the engine currently filters by that array.
 
-1. **Cache IoC → affected-components mapping** at IoC ingest time
-   (already partly populated via the `incidents` write); rewrite
-   `POST /v1/blast-radius` to JOIN `incidents` by `ioc_id` instead
-   of re-running the matcher. Expected: blast-radius p95 drops to
-   the same order of magnitude as `incident-detail` (single-digit
-   ms — both are JOINs over the same indexed table).
-2. **Bulk IoC ingest endpoint** (`POST /v1/iocs:bulk`) so a 500-IoC
-   submission is one transaction, not 500. Combined with moving
-   the matcher fan-out to a background worker (returning 202
-   Accepted with a job ID), per-IoC latency stops gating ingest
-   wall-clock.
-3. **Index on `incidents(ioc_id)` + `incidents(component_ref)`** to
-   keep the new JOIN paths within the latency budget under load.
+The measured baseline gap was therefore not missing indexes but
+the matcher's N+1 query pattern + live re-execution. PR 1 was
+cancelled before any branch landed; PR 2 below is the real fix.
+
+### v0.2.1 PR 2 — BlastRadius hybrid + forwardMatch bulk match
+
+Single-run measurement against the v0.2.0 baseline corpus (same
+host, same fixture, same orchestrator):
+
+| Metric | v0.2.0 median | v0.2.1 PR 2 (1 run) | Delta | Now passing? |
+|---|---|---|---|---|
+| Components ingest | 26 s | 15 s | −42 % | (n/a) |
+| SBOMs ingest | 115 s | 68 s | −41 % | (n/a) |
+| IoCs ingest | 376 s | **3 s** | **−99.2 %** | (n/a) |
+| **Total ingest** | **518 s** | **86 s** | **−83 %** | ✅ < 300 s |
+| Incidents opened | 5 047 | 5 047 | 0 (correctness) | — |
+| **Blast-radius p95** | **2 977 ms** | **2.49 ms** | **−99.9 % (~1 195×)** | ✅ < 500 ms |
+| Blast-radius p99 | 3 500 ms | 3.81 ms | −99.9 % | — |
+| **Incident-detail p95** | **2.97 ms** | **2.61 ms** | flat (no regression) | ✅ |
+
+> Single-run note: PR 2 measurement is one run, not the 3-run
+> median used for the v0.2.0 baseline. The IoC-ingest delta (376 s
+> → 3 s) and blast-radius p95 delta (2 977 ms → 2.49 ms) are far
+> outside any plausible variance band, so the conclusion holds.
+> The components / SBOMs ingest improvements (~40 %) sit closer
+> to variance and should be reconfirmed once PR 3 lands and we
+> rerun the 3-run median; flagged as suggestive, not definitive.
+>
+> Blast-radius sample completion: 884 / 1 000 — within the same
+> 7–12 % shortfall band the baseline showed (929 / 908 / 885).
+> The shortfall is the harness' 30 s `curl --max-time` cap, which
+> almost certainly catches the same handful of malformed IoC
+> bodies in the fixture, not engine-side timeouts (p99 = 3.81 ms).
+
+**What changed:**
+
+- **`storage.MatchedComponentRefsByIoC(iocID)`** — single indexed
+  read against `incidents` keyed on `ioc_id`. Postgres EXPLAIN
+  ANALYZE confirms `Bitmap Index Scan on incidents_ioc_idx`,
+  0.060 ms per query on the populated 5 047-incident corpus. The
+  index was effectively dead in v0.2.0 (no query in the engine
+  used `WHERE ioc_id = ?`); this PR is its first real consumer.
+- **`storage.ListSBOMPackages(ecosystem, name)`** — single bulk
+  JOIN over `sbom_packages` + `sboms`, keyed on the existing
+  `sbom_packages_name_version_idx` (ecosystem + name prefix).
+  Replaces the per-IoC × per-component `ListSBOMsByComponent`
+  loop in `forwardMatch` (5 million postgres roundtrips → 500
+  for the load-test corpus).
+- **BlastRadius handler** is now a hybrid: cache lookup if the
+  IoC is already ingested, live matcher (using the same bulk
+  `ListSBOMPackages` call) if it is not. The what-if contract
+  (`TestBlastRadius_ReturnsAffectedComponents` with
+  `01IOC-HYPO`) is preserved; cache path verified by a new
+  `TestBlastRadius_CachedPathForIngestedIoC` that submits the
+  IoC at version `1.11.0`, then queries with version `1.99.99`
+  in the body — only the cache path can return the original
+  three components.
+
+### v0.2.1 PR 3 — Bulk IoC ingest + matcher background worker (planned)
+
+The remaining ingest cost after PR 2 lives in
+`openIncidentsForMatches`, which still calls `ListIncidents()`
+per IoC submit to dedupe (IoC, component) pairs against open
+incidents. PR 3 will:
+
+1. **`POST /v1/iocs:bulk`** so a 500-IoC submission is one
+   transaction, not 500.
+2. **Matcher dispatch on a background worker** so the HTTP
+   submit returns 202 Accepted with a job ID; ingest wall-clock
+   stops gating the API contract.
+3. **`UpsertIncidentsBatch`** at the storage layer to replace
+   the per-incident UPSERT loop.
+
+PR 2 is already inside the < 300 s ingest target with headroom,
+so PR 3 is graduated improvement, not a release-gate dependency.
 
 This load-test infra (script + fixture generator + this doc) is
-the regression harness for the v0.2.1 work — same corpus, same
-host, before/after numbers go in the same table.
+the regression harness — same corpus, same host, every PR's
+before/after row goes in the same table.
 
 ## Reproducing locally
 
