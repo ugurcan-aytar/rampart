@@ -141,6 +141,57 @@ func TestEvaluate_PublisherAnomaly_IsNoOpInPhase1(t *testing.T) {
 	require.False(t, m.Matched, "Phase 1: publisherAnomaly IoCs must never match")
 }
 
+// TestEvaluate_PublisherAnomaly_AnomalyBody_Hit covers the F3 IoC
+// bridge dispatch: when the IoC carries the IoCBodyAnomaly variant,
+// the matcher walks the SBOM and matches packages whose
+// `<ecosystem>:<name>` equals the anomaly's PackageRef. Version is
+// intentionally not part of the key.
+func TestEvaluate_PublisherAnomaly_AnomalyBody_Hit(t *testing.T) {
+	ioc := domain.IoC{
+		Kind:      domain.IoCKindPublisherAnomaly,
+		Ecosystem: "npm",
+		AnomalyBody: &domain.IoCBodyAnomaly{
+			Kind:       domain.AnomalyKindOIDCPublishingRegression,
+			Confidence: domain.ConfidenceHigh,
+			PackageRef: "npm:axios",
+		},
+	}
+	// Two versions of axios in the same SBOM — both should match (the
+	// anomaly is a property of the package, not a specific release).
+	m := matcher.Evaluate(ioc, sbomWith(pkg("axios", "1.11.0"), pkg("axios", "1.10.0")))
+	require.True(t, m.Matched)
+	require.Len(t, m.Packages, 2)
+}
+
+func TestEvaluate_PublisherAnomaly_AnomalyBody_NoHit(t *testing.T) {
+	ioc := domain.IoC{
+		Kind:      domain.IoCKindPublisherAnomaly,
+		Ecosystem: "npm",
+		AnomalyBody: &domain.IoCBodyAnomaly{
+			Kind:       domain.AnomalyKindMaintainerEmailDrift,
+			Confidence: domain.ConfidenceMedium,
+			PackageRef: "npm:left-pad",
+		},
+	}
+	m := matcher.Evaluate(ioc, sbomWith(pkg("axios", "1.11.0")))
+	require.False(t, m.Matched, "axios SBOM must not match a left-pad anomaly")
+}
+
+func TestEvaluate_PublisherAnomaly_AnomalyBody_EmptyPackageRefIsNoOp(t *testing.T) {
+	ioc := domain.IoC{
+		Kind:      domain.IoCKindPublisherAnomaly,
+		Ecosystem: "npm",
+		AnomalyBody: &domain.IoCBodyAnomaly{
+			Kind:       domain.AnomalyKindVersionJump,
+			Confidence: domain.ConfidenceLow,
+			// Intentionally empty PackageRef — matcher should not panic
+			// and must not match anything.
+		},
+	}
+	m := matcher.Evaluate(ioc, sbomWith(pkg("axios", "1.11.0")))
+	require.False(t, m.Matched)
+}
+
 func TestEvaluate_EcosystemMismatch_NoMatch(t *testing.T) {
 	// An npm IoC vs. a pypi SBOM is a no-match by construction — guards
 	// the engine against operator error when the same package name
