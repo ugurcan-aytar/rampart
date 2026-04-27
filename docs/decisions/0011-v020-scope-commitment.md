@@ -28,6 +28,8 @@ v0.2.0 ships six coherent themes simultaneously:
 - **Theme E — Frontend depth.** IncidentDashboard gets detail drawer (timeline + IoC + affected components + remediation log), blast-radius graph visualisation (@react-flow), search + filter with URL state.
 - **Theme F — Publisher-anomaly detector.** Three concrete anomaly types (maintainer email drift, OIDC regression, version jump). npm API + GitHub API ingestion, Postgres-backed publisher history table.
 
+  **Implementation note (PR #39, 2026-04-26)**: Theme F2 ships detection + persistence + GET /v1/anomalies endpoints, but defers IoC emission (the original spec line "emits IoCKindPublisherAnomaly") to F3. Reason: ADR-0013's Snapshot vs Profile split surfaced that the existing `IoCKindPublisherAnomaly` body shape is maintainer-keyed (Theme D era), while F2's anomalies are package-keyed. Bridging the two requires either semantic strain (PublisherName = packageRef) or a new IoC body variant — neither belongs in F2's scope. F3 (publisher anomaly surface in IncidentDashboard) will land alongside Theme E and decide the bridging design at that point. F2's GET /v1/anomalies endpoint is the contract F3 reads from in the meantime.
+
 Six themes ship together because:
 1. Theme B (proxy wiring) depends on Theme A (CORS can be removed only if proxy replaces direct-engine calls).
 2. Theme F (publisher anomaly) depends on Theme D (publisher history needs persistence).
