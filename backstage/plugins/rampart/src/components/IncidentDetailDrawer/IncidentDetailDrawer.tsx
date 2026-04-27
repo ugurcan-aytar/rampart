@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
+import Button from '@mui/material/Button';
 import CircularProgress from '@mui/material/CircularProgress';
+import Dialog from '@mui/material/Dialog';
+import DialogContent from '@mui/material/DialogContent';
+import DialogTitle from '@mui/material/DialogTitle';
 import Divider from '@mui/material/Divider';
 import Drawer from '@mui/material/Drawer';
 import IconButton from '@mui/material/IconButton';
@@ -10,9 +14,12 @@ import ListItem from '@mui/material/ListItem';
 import ListItemText from '@mui/material/ListItemText';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
+import GraphIcon from '@mui/icons-material/AccountTree';
 import { useApi } from '@backstage/core-plugin-api';
 
 import { rampartApiRef } from '../../api';
+import { BlastRadiusGraph } from '../BlastRadiusGraph';
+import { PublisherAnomalyPanel } from '../PublisherAnomalyPanel';
 import type { components } from '../../api/gen/schema';
 
 type IncidentDetail = components['schemas']['IncidentDetail'];
@@ -74,7 +81,12 @@ function iocBodyOf(ioc: IoC): unknown {
 
 /** IoCPanel renders the matched IoC: kind, ecosystem, severity, plus a
  *  collapsible JSON dump of the body. Empty when the IoC has been deleted
- *  after the incident opened (engine returns 200 with omitted `ioc`). */
+ *  after the incident opened (engine returns 200 with omitted `ioc`).
+ *
+ *  When the IoC carries the `anomalyBody` variant (Theme F3 IoC bridge,
+ *  ADR-0014), the body slot is replaced by PublisherAnomalyPanel which
+ *  fetches `/v1/publisher/{ref}/history` and renders the maintainer /
+ *  cadence / OIDC charts inline. */
 const IoCPanel = ({ detail }: { detail: IncidentDetail }) => {
   if (!detail.ioc) {
     return (
@@ -87,6 +99,7 @@ const IoCPanel = ({ detail }: { detail: IncidentDetail }) => {
     );
   }
   const ioc = detail.ioc;
+  const isAnomalyVariant = Boolean(ioc.anomalyBody);
   return (
     <Box data-testid="panel-ioc">
       <Typography variant="subtitle1">Matched IoC</Typography>
@@ -107,27 +120,49 @@ const IoCPanel = ({ detail }: { detail: IncidentDetail }) => {
           <ListItemText primary="Source" secondary={ioc.source ?? '—'} />
         </ListItem>
       </List>
-      <details>
-        <summary>
-          <Typography variant="caption" component="span">Body (raw JSON)</Typography>
-        </summary>
-        <pre style={{ fontSize: 12, overflow: 'auto', maxHeight: 200 }}>
-          {JSON.stringify(iocBodyOf(ioc), null, 2)}
-        </pre>
-      </details>
+      {isAnomalyVariant ? (
+        <PublisherAnomalyPanel ioc={ioc} />
+      ) : (
+        <details>
+          <summary>
+            <Typography variant="caption" component="span">Body (raw JSON)</Typography>
+          </summary>
+          <pre style={{ fontSize: 12, overflow: 'auto', maxHeight: 200 }}>
+            {JSON.stringify(iocBodyOf(ioc), null, 2)}
+          </pre>
+        </details>
+      )}
     </Box>
   );
 };
 
 /** AffectedComponentsPanel renders the snapshot at incident-open time,
- *  hydrated by the joined endpoint. Components show ref + owner; the
- *  catalog link is inert in this commit (the graph view + click-to-reroot
- *  land in the E2 follow-up PR). */
+ *  hydrated by the joined endpoint. Components show ref + owner. The
+ *  "Show graph" button opens BlastRadiusGraph in a full-screen dialog —
+ *  drawer stays compact + mobile-friendly while the graph gets the
+ *  canvas it needs. */
 const AffectedComponentsPanel = ({ detail }: { detail: IncidentDetail }) => {
   const components = detail.affectedComponents ?? [];
+  const [graphOpen, setGraphOpen] = useState(false);
+  const [graphRoot, setGraphRoot] = useState<string | undefined>(undefined);
+
   return (
     <Box data-testid="panel-affected">
-      <Typography variant="subtitle1">Affected components ({components.length})</Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography variant="subtitle1">
+          Affected components ({components.length})
+        </Typography>
+        {components.length > 0 && (
+          <Button
+            size="small"
+            startIcon={<GraphIcon fontSize="small" />}
+            onClick={() => setGraphOpen(true)}
+            data-testid="open-blast-graph"
+          >
+            Show graph
+          </Button>
+        )}
+      </Box>
       {components.length === 0 ? (
         <Typography variant="body2" color="text.secondary">
           No components affected (or all snapshot refs no longer resolve).
@@ -156,6 +191,31 @@ const AffectedComponentsPanel = ({ detail }: { detail: IncidentDetail }) => {
           ))}
         </List>
       )}
+      <Dialog
+        open={graphOpen}
+        onClose={() => setGraphOpen(false)}
+        fullWidth
+        maxWidth="lg"
+        data-testid="blast-graph-dialog"
+      >
+        <DialogTitle>
+          Blast radius — Incident {detail.incident.id}
+          <IconButton
+            aria-label="close graph"
+            onClick={() => setGraphOpen(false)}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <BlastRadiusGraph
+            detail={detail}
+            rootComponentRef={graphRoot}
+            onRootChange={setGraphRoot}
+          />
+        </DialogContent>
+      </Dialog>
     </Box>
   );
 };

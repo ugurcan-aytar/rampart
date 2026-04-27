@@ -1,9 +1,11 @@
 import type { components } from './gen/schema';
-import type { RampartApi, StreamEvent } from './ref';
+import type { IncidentListFilter, RampartApi, StreamEvent } from './ref';
 
 type Incident = components['schemas']['Incident'];
 type IncidentDetail = components['schemas']['IncidentDetail'];
 type IncidentPage = components['schemas']['IncidentPage'];
+type PublisherHistory = components['schemas']['PublisherHistory'];
+type PublisherSnapshot = components['schemas']['PublisherSnapshot'];
 type SBOM = components['schemas']['SBOM'];
 
 const STREAM_EVENT_TYPES = [
@@ -31,6 +33,29 @@ type DiscoveryApi = { getBaseUrl(pluginId: string): Promise<string> };
 type FetchApi = { fetch: typeof fetch };
 
 /**
+ * filterToQueryString serialises an IncidentListFilter into the
+ * exact form ListIncidents handler expects. Multi-value filters
+ * (states, ecosystems) emit one query parameter per value (matches
+ * `style: form, explode: true` in the OpenAPI spec).
+ */
+function filterToQueryString(filter?: IncidentListFilter): string {
+  if (!filter) return '';
+  const params = new URLSearchParams();
+  for (const s of filter.states ?? []) {
+    if (s) params.append('state', s);
+  }
+  for (const e of filter.ecosystems ?? []) {
+    if (e) params.append('ecosystem', e);
+  }
+  if (filter.from) params.set('from', filter.from);
+  if (filter.to) params.set('to', filter.to);
+  if (filter.search) params.set('search', filter.search);
+  if (filter.owner) params.set('owner', filter.owner);
+  if (filter.limit !== undefined) params.set('limit', String(filter.limit));
+  return params.toString();
+}
+
+/**
  * RampartClient speaks the engine's HTTP + SSE contract. The base URL
  * is resolved via Backstage's discoveryApi — `rampart` maps to
  * `${backend.baseUrl}/api/rampart` — so the frontend never hits the
@@ -46,9 +71,11 @@ export class RampartClient implements RampartApi {
     private readonly fetchApi: FetchApi,
   ) {}
 
-  async listIncidents(): Promise<Incident[]> {
+  async listIncidents(filter?: IncidentListFilter): Promise<Incident[]> {
     const base = await this.discovery.getBaseUrl('rampart');
-    const res = await this.fetchApi.fetch(`${base}/v1/incidents`);
+    const qs = filterToQueryString(filter);
+    const url = qs ? `${base}/v1/incidents?${qs}` : `${base}/v1/incidents`;
+    const res = await this.fetchApi.fetch(url);
     if (!res.ok) {
       throw new Error(`rampart: listIncidents ${res.status}`);
     }
@@ -76,6 +103,18 @@ export class RampartClient implements RampartApi {
       throw new Error(`rampart: getIncidentDetail ${res.status}`);
     }
     return (await res.json()) as IncidentDetail;
+  }
+
+  async getPublisherHistory(packageRef: string, limit?: number): Promise<PublisherSnapshot[]> {
+    const base = await this.discovery.getBaseUrl('rampart');
+    const qs = limit !== undefined ? `?limit=${limit}` : '';
+    const path = `${base}/v1/publisher/${encodeURIComponent(packageRef)}/history${qs}`;
+    const res = await this.fetchApi.fetch(path);
+    if (!res.ok) {
+      throw new Error(`rampart: getPublisherHistory ${res.status}`);
+    }
+    const page = (await res.json()) as PublisherHistory;
+    return page.items;
   }
 
   async listSBOMsForComponent(componentRef: string): Promise<SBOM[]> {
