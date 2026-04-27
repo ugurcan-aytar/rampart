@@ -1,0 +1,10 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+com.fasterxml.jackson.core:jackson-databind:2.16.1=compileClasspath,runtimeClasspath
+com.google.guava:guava:33.0.0-jre=compileClasspath,runtimeClasspath
+io.netty:netty-all:4.1.106.Final=runtimeClasspath
+org.slf4j:slf4j-api:2.0.11=compileClasspath,runtimeClasspath
+org.springframework:spring-core:6.1.2=compileClasspath,runtimeClasspath
+org.springframework:spring-web:6.1.2=compileClasspath,runtimeClasspath
+empty=annotationProcessor,testAnnotationProcessor
