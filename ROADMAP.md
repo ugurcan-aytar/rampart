@@ -164,6 +164,32 @@ maintainers don't re-attempt prematurely.
   - Re-evaluation trigger: next `@backstage/core-components` major
     accepts `react-markdown@^10` in peerDependencies.
 
+- **MUI 9 migration in the rampart Backstage plugin** (currently on
+  MUI 5 / `@mui/material@^5` via Backstage transitive). PR #41
+  (Theme E+F3 part 2) attempted MUI 9 components (`Select multiple`,
+  `Stack`, `Chip`) and hit a runtime `length undefined` error in
+  Backstage's production webpack bundle that killed SPA mount.
+  Native HTML controls (`<input>`, `<button>` with inline styles)
+  were used as the safe fallback for the IncidentDashboardToolbar.
+  - Blocked on: Backstage's own upgrade path to MUI 6/7/8 —
+    `@backstage/core-components` peer-deps still pin
+    `@mui/material@^5`.
+  - Re-evaluation trigger: a `@backstage/core-components` major
+    release accepts `@mui/material@^6` (or higher) in peerDependencies.
+
+- **Recharts 3.x migration** (currently pinned to `recharts@^2.15.0`).
+  PR #41 attempted recharts 3.x (June 2025 ESM-only release) but
+  its distribution doesn't resolve through Backstage's webpack 5
+  setup — the SPA mount aborts on initial chart-component load.
+  Recharts 2.x line is stable and feature-equivalent for v0.2.0
+  PublisherAnomalyPanel chart needs.
+  - Blocked on: any of (a) recharts 3.x adds a CommonJS export,
+    (b) Backstage's webpack config is upgraded to support the
+    `package.json#exports` pattern recharts 3.x uses, (c) the
+    rampart frontend migrates off Backstage's webpack onto a Vite
+    build.
+  - Re-evaluation trigger: any of the three above lands.
+
 ---
 
 ## v0.2.0 — major feature release (target: 6–10 weeks after v0.1.1)
@@ -729,6 +755,14 @@ but depend on v0.9.0's audit outcomes:
 - **Policy engine**: operator-defined policies (`IoC severity=critical
   → auto-remediate via PR`). OPA / Rego or a simpler DSL — TBD per
   v0.9.0 learnings.
+- **Frontend hardening pass**: BlastRadiusGraph 100-component fleet
+  performance measurement (Playwright e2e benchmark — the perf
+  claim from PR #41 rests on reactflow's native behaviour and was
+  not measured under load). MUI 9 / Recharts 3.x compatibility
+  re-evaluation (per the Deferred upgrades triggers above).
+  Distinct anomaly icon in the IncidentDashboard list view —
+  currently drawer-only because the row type doesn't carry the IoC
+  body shape; per-row IoC fetch would N+1 the listing path.
 
 ### Further horizons (no target release)
 
