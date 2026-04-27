@@ -67,6 +67,31 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Override release notes from CHANGELOG.md
+        # goreleaser's auto-generated changelog includes commits that
+        # the regex filters miss (e.g. `chore(deps):` slips past
+        # `^chore:`). Override the body with the human-curated
+        # CHANGELOG.md entry when one exists for the tag; otherwise
+        # leave goreleaser's output as the fail-safe.
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          VERSION_NO_V="${VERSION#v}"
+          echo "Looking for CHANGELOG.md entry '## [$VERSION_NO_V]'"
+          awk -v ver="$VERSION_NO_V" '
+            $0 ~ "^## \\[" ver "\\]" {flag=1; print; next}
+            flag && /^## \[/ {exit}
+            flag {print}
+          ' CHANGELOG.md > /tmp/release-body.md
+          if [ -s /tmp/release-body.md ]; then
+            echo "Found $(wc -l < /tmp/release-body.md) lines; overriding release notes"
+            gh release edit "$VERSION" --notes-file /tmp/release-body.md
+          else
+            echo "No entry for $VERSION_NO_V in CHANGELOG.md; keeping goreleaser auto-changelog"
+          fi
+
   # -------------------------------------------------------------
   # 2. Rust sidecar — rampart-native cross-compile
   # -------------------------------------------------------------
