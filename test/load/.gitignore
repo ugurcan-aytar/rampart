@@ -1,0 +1,8 @@
+# Generated fixture corpus — large, deterministic from generate_fixtures.go.
+# Re-generate locally with `go run ./test/load/generate_fixtures.go`
+# (the orchestrator does this automatically when fixtures are missing).
+fixtures/
+
+# Per-run output — kept locally for diff'ing against the published
+# baseline in docs/performance/v020-load-test.md.
+results.json
