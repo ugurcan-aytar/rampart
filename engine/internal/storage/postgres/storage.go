@@ -762,6 +762,121 @@ func nullableString(s string) any {
 	return s
 }
 
+// --- Anomaly --------------------------------------------------------------
+
+func (s *Store) SaveAnomaly(ctx context.Context, a domain.Anomaly) (int64, error) {
+	evidenceJSON, err := marshalJSON(a.Evidence)
+	if err != nil {
+		return 0, err
+	}
+	detectedAt := a.DetectedAt
+	if detectedAt.IsZero() {
+		detectedAt = time.Now().UTC()
+	}
+	// ON CONFLICT (kind, package_ref, detected_at) DO UPDATE SET id=id
+	// is the idiomatic upsert that returns the existing row's id when
+	// the dedup key already exists — without DO UPDATE the RETURNING
+	// clause yields no row on conflict.
+	var id int64
+	err = s.pool.QueryRow(ctx, `
+		INSERT INTO anomalies
+		    (kind, package_ref, detected_at, confidence, explanation, evidence)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (kind, package_ref, detected_at) DO UPDATE SET id = anomalies.id
+		RETURNING id`,
+		string(a.Kind), a.PackageRef, detectedAt, string(a.Confidence),
+		a.Explanation, evidenceJSON,
+	).Scan(&id)
+	if err != nil {
+		return 0, wrapPgErr(err, "SaveAnomaly")
+	}
+	return id, nil
+}
+
+func (s *Store) GetAnomaly(ctx context.Context, id int64) (*domain.Anomaly, error) {
+	row := s.pool.QueryRow(ctx, `
+		SELECT id, kind, package_ref, detected_at, confidence, explanation, evidence
+		FROM anomalies WHERE id = $1`, id)
+	a, err := scanAnomaly(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, storage.ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("postgres: GetAnomaly: %w", err)
+	}
+	return a, nil
+}
+
+func (s *Store) ListAnomalies(ctx context.Context, filter domain.AnomalyFilter) ([]domain.Anomaly, error) {
+	const noLimitSentinel = 1 << 31
+	limit := filter.Limit
+	if limit <= 0 {
+		limit = noLimitSentinel
+	}
+	// We pass each filter dimension as a nullable parameter so the
+	// query plan stays the same regardless of which slots are set.
+	// COALESCE-style guards in the WHERE clause turn nil → "match all".
+	var (
+		pkgRef *string
+		kind   *string
+		from   *time.Time
+		to     *time.Time
+	)
+	if filter.PackageRef != "" {
+		v := filter.PackageRef
+		pkgRef = &v
+	}
+	if filter.Kind != "" {
+		v := string(filter.Kind)
+		kind = &v
+	}
+	from = filter.From
+	to = filter.To
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, kind, package_ref, detected_at, confidence, explanation, evidence
+		FROM anomalies
+		WHERE ($1::text IS NULL OR package_ref = $1)
+		  AND ($2::text IS NULL OR kind = $2)
+		  AND ($3::timestamptz IS NULL OR detected_at >= $3)
+		  AND ($4::timestamptz IS NULL OR detected_at <= $4)
+		ORDER BY detected_at DESC
+		LIMIT $5`, pkgRef, kind, from, to, limit)
+	if err != nil {
+		return nil, fmt.Errorf("postgres: ListAnomalies: %w", err)
+	}
+	defer rows.Close()
+	out := []domain.Anomaly{}
+	for rows.Next() {
+		a, err := scanAnomaly(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, rows.Err()
+}
+
+// scanAnomaly accepts both *pgx.Row and pgx.Rows via the existing
+// rowScanner interface defined alongside scanComponent.
+func scanAnomaly(r rowScanner) (*domain.Anomaly, error) {
+	var (
+		a            domain.Anomaly
+		kind, conf   string
+		evidenceJSON []byte
+	)
+	if err := r.Scan(&a.ID, &kind, &a.PackageRef, &a.DetectedAt, &conf, &a.Explanation, &evidenceJSON); err != nil {
+		return nil, err
+	}
+	a.Kind = domain.AnomalyKind(kind)
+	a.Confidence = domain.ConfidenceLevel(conf)
+	a.DetectedAt = a.DetectedAt.UTC()
+	if err := unmarshalJSON(evidenceJSON, &a.Evidence); err != nil {
+		return nil, err
+	}
+	return &a, nil
+}
+
 // --- helpers ---------------------------------------------------------------
 
 // nonNilStrings returns an empty slice for nil so pgx's array encoder

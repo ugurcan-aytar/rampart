@@ -16,6 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ugurcan-aytar/rampart/engine/anomaly"
+	"github.com/ugurcan-aytar/rampart/engine/anomaly/maintainerdrift"
+	"github.com/ugurcan-aytar/rampart/engine/anomaly/oidcregression"
+	"github.com/ugurcan-aytar/rampart/engine/anomaly/versionjump"
 	"github.com/ugurcan-aytar/rampart/engine/ingestion"
 	"github.com/ugurcan-aytar/rampart/engine/internal/api"
 	"github.com/ugurcan-aytar/rampart/engine/internal/api/middleware"
@@ -200,6 +204,11 @@ func (a *App) Run(ctx context.Context) error {
 	stopScheduler := a.startPublisherScheduler(ctx)
 	defer stopScheduler()
 
+	// Optional anomaly orchestrator (Theme F2). Default OFF — same
+	// rationale as the F1 scheduler. Flip via RAMPART_ANOMALY_ENABLED.
+	stopAnomaly := a.startAnomalyOrchestrator(ctx)
+	defer stopAnomaly()
+
 	errCh := make(chan error, 1)
 	go func() {
 		if err := a.server.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -260,6 +269,46 @@ func (a *App) startPublisherScheduler(parentCtx context.Context) func() {
 		case <-done:
 		case <-time.After(2 * time.Second):
 			a.log.Warn("publisher scheduler did not stop within 2s")
+		}
+	}
+}
+
+// startAnomalyOrchestrator is a no-op when AnomalyEnabled is false.
+// When enabled, it wires the three F2 detectors and runs the
+// orchestrator in a goroutine; the returned func cancels the
+// orchestrator's ctx + waits briefly for it to settle.
+func (a *App) startAnomalyOrchestrator(parentCtx context.Context) func() {
+	noop := func() {}
+	if !a.cfg.AnomalyEnabled {
+		return noop
+	}
+	orch, err := anomaly.NewOrchestrator(anomaly.OrchestratorConfig{
+		Storage: a.storage,
+		Detectors: []anomaly.Detector{
+			maintainerdrift.New(),
+			oidcregression.New(),
+			versionjump.New(),
+		},
+		TickInterval: a.cfg.AnomalyDetectInterval,
+		BatchSize:    a.cfg.AnomalyBatchSize,
+		Logger:       a.log,
+	})
+	if err != nil {
+		a.log.Error("anomaly orchestrator config invalid; not starting", "err", err)
+		return noop
+	}
+	orchCtx, cancel := context.WithCancel(parentCtx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = orch.Run(orchCtx)
+	}()
+	return func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			a.log.Warn("anomaly orchestrator did not stop within 2s")
 		}
 	}
 }

@@ -38,7 +38,7 @@ func seedIncidentScenario(t *testing.T) (http.Handler, *memory.Store, []string) 
 	_ = postIoC(t, h, gen.IoC{
 		Id:          "01IOC-AXIOS-1-11-0",
 		Kind:        gen.IoCKindPackageVersion,
-		Severity:    gen.Critical,
+		Severity:    gen.SeverityCritical,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		PackageVersion: &gen.IoCPackageVersion{
@@ -140,7 +140,7 @@ func TestTransitionIncident_ValidChain(t *testing.T) {
 	_ = postIoC(t, h, gen.IoC{
 		Id:          "01IOC-X",
 		Kind:        gen.IoCKindPackageVersion,
-		Severity:    gen.Critical,
+		Severity:    gen.SeverityCritical,
 		Ecosystem:   "npm",
 		PublishedAt: time.Now().UTC(),
 		PackageVersion: &gen.IoCPackageVersion{
@@ -215,7 +215,7 @@ func TestBlastRadius_ReturnsAffectedComponents(t *testing.T) {
 			{
 				Id:          "01IOC-HYPO",
 				Kind:        gen.IoCKindPackageVersion,
-				Severity:    gen.High,
+				Severity:    gen.SeverityHigh,
 				Ecosystem:   "npm",
 				PublishedAt: time.Now().UTC(),
 				PackageVersion: &gen.IoCPackageVersion{

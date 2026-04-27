@@ -127,6 +127,26 @@ type Config struct {
 	// api.github.com — bumps the GitHub rate limit from 60/hr (unauth)
 	// to 5000/hr. Only consulted when PublisherEnabled=true.
 	GithubToken string
+
+	// --- Anomaly detection (Theme F2) -------------------------------------
+	// OFF by default for the same reason as the F1 scheduler: a
+	// default-on detector loop would surprise operators of v0.1.x
+	// deployments. Flip via RAMPART_ANOMALY_ENABLED=true.
+
+	// AnomalyEnabled gates the orchestrator. false = no orchestrator,
+	// no anomalies produced. The GET /v1/anomalies endpoints stay
+	// available (they just return empty pages) so consumers don't
+	// have to feature-detect.
+	AnomalyEnabled bool
+
+	// AnomalyDetectInterval is how often the orchestrator ticks. Each
+	// tick walks every package with snapshots and re-runs every
+	// detector; SaveAnomaly is idempotent so back-to-back ticks at
+	// the same wall time are no-ops.
+	AnomalyDetectInterval time.Duration
+
+	// AnomalyBatchSize caps the number of packages evaluated per tick.
+	AnomalyBatchSize int
 }
 
 // Default returns the Phase 1 defaults.
@@ -147,6 +167,9 @@ func Default() *Config {
 		PublisherEnabled:         false,
 		PublisherRefreshInterval: time.Hour,
 		PublisherBatchSize:       50,
+		AnomalyEnabled:           false,
+		AnomalyDetectInterval:    time.Hour,
+		AnomalyBatchSize:         200,
 	}
 }
 
@@ -209,6 +232,20 @@ func FromEnv() *Config {
 	}
 	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
 		c.GithubToken = v
+	}
+	if v := os.Getenv("RAMPART_ANOMALY_ENABLED"); v != "" {
+		c.AnomalyEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("RAMPART_ANOMALY_DETECT_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.AnomalyDetectInterval = d
+		}
+	}
+	if v := os.Getenv("RAMPART_ANOMALY_BATCH_SIZE"); v != "" {
+		var n int
+		if _, err := fmt.Sscanf(v, "%d", &n); err == nil && n > 0 {
+			c.AnomalyBatchSize = n
+		}
 	}
 	return c
 }

@@ -44,6 +44,12 @@ tags:
       Publisher metadata snapshots collected from upstream registries
       (npm, GitHub). Theme F1 ingests; Theme F2 will diff successive
       snapshots to raise PublisherSignals.
+  - name: anomalies
+    description: |
+      Detector hits raised by Theme F2 — anomalies derived from
+      publisher snapshot history. Each anomaly carries a Kind
+      (maintainer email drift / OIDC regression / version jump),
+      a Confidence level, and detector-specific Evidence.
   - name: auth
     description: |
       Authentication token issuance. The engine validates JWTs on every
@@ -379,6 +385,40 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/PublisherHistory' }
         '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/anomalies:
+    get:
+      tags: [anomalies]
+      operationId: ListAnomalies
+      summary: List detector hits, optionally filtered by package / kind / time.
+      parameters:
+        - { name: package_ref, in: query, schema: { type: string }, description: 'Filter to a single package_ref (e.g. `npm:axios`).' }
+        - { name: kind, in: query, schema: { $ref: '#/components/schemas/AnomalyKind' } }
+        - { name: from, in: query, schema: { type: string, format: date-time } }
+        - { name: to,   in: query, schema: { type: string, format: date-time } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200':
+          description: Newest-first list of anomalies.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AnomalyPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /v1/anomalies/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: integer, format: int64 } }
+    get:
+      tags: [anomalies]
+      operationId: GetAnomaly
+      summary: Fetch a single anomaly by id.
+      responses:
+        '200':
+          description: Anomaly.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Anomaly' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /v1/stream:
     get:
@@ -783,6 +823,41 @@ components:
         items:
           type: array
           items: { $ref: '#/components/schemas/PublisherSnapshot' }
+
+    AnomalyKind:
+      type: string
+      description: |
+        Theme F2 anomaly catalog. String values mirror the matching
+        `SignalType` constants — `AnomalyKind` is the F2 subset that
+        ships with concrete detectors.
+      enum: [new_maintainer_email, oidc_regression, version_jump]
+
+    Confidence:
+      type: string
+      enum: [low, medium, high]
+
+    Anomaly:
+      type: object
+      required: [id, kind, packageRef, detectedAt, confidence, explanation]
+      properties:
+        id:          { type: integer, format: int64 }
+        kind:        { $ref: '#/components/schemas/AnomalyKind' }
+        packageRef:  { type: string, example: 'npm:axios' }
+        detectedAt:  { type: string, format: date-time }
+        confidence:  { $ref: '#/components/schemas/Confidence' }
+        explanation: { type: string }
+        evidence:
+          type: object
+          description: Detector-specific structured evidence.
+          additionalProperties: true
+
+    AnomalyPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Anomaly' }
 
     PublisherSignal:
       type: object
