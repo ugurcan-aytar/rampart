@@ -13,8 +13,24 @@ export type StreamEvent =
   | { type: 'sbom.ingested'; data: components['schemas']['SBOMIngestedEvent'] }
   | { type: 'ioc.matched'; data: components['schemas']['IoCMatchedEvent'] };
 
+/**
+ * IncidentListFilter mirrors the engine's ListIncidents query params
+ * (Theme E3 backend, PR #40 commit d6ea9d6). Empty fields = no filter
+ * on that dimension. Multi-value filters (states, ecosystems) are OR'd
+ * within the dimension; all dimensions are AND'd together.
+ */
+export type IncidentListFilter = {
+  states?: string[];
+  ecosystems?: string[];
+  from?: string;
+  to?: string;
+  search?: string;
+  owner?: string;
+  limit?: number;
+};
+
 export type RampartApi = {
-  listIncidents(): Promise<Incident[]>;
+  listIncidents(filter?: IncidentListFilter): Promise<Incident[]>;
   getIncident(id: string): Promise<Incident>;
   /**
    * getIncidentDetail returns the joined view used by IncidentDetailDrawer:
