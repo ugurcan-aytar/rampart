@@ -1,0 +1,21 @@
+# Synthetic requirements.txt for the rampart load-test fixture suite.
+# Real-world output of `pip freeze` — strict pins, comments, extras.
+
+Django==4.2.7
+djangorestframework==3.14.0
+celery[redis]==5.3.4    # extras stripped at parse time
+psycopg2-binary==2.9.9
+gunicorn==21.2.0
+
+# A few deps with the various comment / spacing shapes pip emits:
+requests==2.31.0
+urllib3==2.0.7  ; python_version >= "3.7"
+
+# Skipped — not pinned:
+flask>=2.0.0
+# Skipped — VCS dep:
+git+https://github.com/example/foo.git@main
+# Skipped — local path:
+-e ./local-pkg
+# Skipped — pip directive:
+--hash=sha256:deadbeef
