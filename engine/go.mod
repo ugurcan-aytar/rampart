@@ -3,7 +3,7 @@ module github.com/ugurcan-aytar/rampart/engine
 go 1.25.0
 
 require (
-	github.com/BurntSushi/toml v1.3.2
+	github.com/BurntSushi/toml v1.6.0
 	github.com/Masterminds/semver/v3 v3.4.0
 	github.com/getkin/kin-openapi v0.135.0
 	github.com/golang-jwt/jwt/v5 v5.3.1
