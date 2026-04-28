@@ -7,6 +7,144 @@ and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-04-28
+
+Performance + multi-ecosystem release. Closes the deferred items
+from v0.2.0's release notes (PyPI + Maven parsers, blast-radius
+performance fix), with honest measured deltas against the v0.2.0
+load test baseline.
+
+### Performance — Theme F perf fix
+
+The v0.2.0 baseline missed two of three performance targets (total
+ingest 518s vs 300s target; blast-radius p95 2977ms vs 500ms target).
+v0.2.1 closes both gaps with measured margin.
+
+Root cause was N+1 query patterns in two places, not missing indexes:
+
+- `forwardMatch` looped over every component fetching SBOMs one-by-one
+  (10k components × 500 IoCs = 5M postgres roundtrips per ingest stage).
+- `BlastRadius` re-executed the matcher live on every request, making
+  the same 10k roundtrips per call.
+
+Fix landed in PR #47 as two storage methods plus a hybrid handler:
+
+- `MatchedComponentRefsByIoC` — cached lookup against the incidents
+  table for already-ingested IoCs (uses existing `incidents_ioc_idx`).
+- `ListSBOMPackages` — single JOIN replacing the per-component fetch
+  loop (uses existing `sbom_packages_name_version_idx`).
+- `BlastRadius` handler routes ingested IoCs to the cache path and
+  hypothetical IoCs to the live matcher (preserves what-if semantics
+  documented in the handler docstring + integration test).
+
+| Metric | v0.2.0 | v0.2.1 | Target | Status |
+|---|---|---|---|---|
+| Total ingest | 518s | 86s | <300s | ✅ |
+| IoC ingest stage | 376s | 3s | n/a | ~125× |
+| Blast-radius p95 | 2977ms | 2.49ms | <500ms | ✅ |
+| Incident-detail p95 | 2.97ms | 2.61ms | <200ms | ✅ no regression |
+| Incidents opened | 5047 | 5047 | — | correctness preserved |
+
+Single-run measurement against the v0.2.0 baseline corpus (5,047
+incidents, 10k components, 500 IoCs, 200 anomalies). Methodology
+and EXPLAIN ANALYZE evidence in `docs/performance/v020-load-test.md`.
+
+### Cancelled / skipped from original v0.2.1 plan
+
+- **PR 1 — Postgres index migration: cancelled.** Initial plan
+  assumed missing indexes were the bottleneck. Investigation showed
+  all required indexes already existed from migration 0004; the
+  baseline gap was N+1 query patterns, not missing indexes. PR 1
+  would have been cargo-cult work producing no measurable delta.
+- **PR 3 — Bulk IoC ingest endpoint + background worker: skipped.**
+  PR 2 (above) closed all performance targets with margin. Bulk
+  endpoint scope (202 Accepted + status polling + matcher fan-out
+  worker) was deferred under YAGNI discipline; revisit when
+  multi-repo aggregation (v0.3.0 Theme H) increases fleet size.
+
+### Multi-ecosystem — Theme C3 + C4
+
+Five ecosystems / eight lockfile dialects now production-validated.
+Closes the "PyPI + Maven parsers ship in v0.2.1" deferral from the
+v0.2.0 release notes.
+
+PR #48 added:
+
+- **PyPI** — three lockfile formats: `requirements.txt` (extras +
+  env markers stripped, VCS/local lines skipped), `poetry.lock`,
+  `uv.lock`.
+- **Maven / Gradle** — two formats: `pom.xml` (property
+  substitution, test scope visibility, unresolved properties kept
+  verbatim), `gradle.lockfile`.
+- Auto-detect by filename (7 of 8 dialects); cargo's legacy
+  `simple.toml` fixture still requires `--ecosystem cargo` flag.
+
+Per ADR-0011 amendment: no new `IoCKind` enums; ecosystem dimension
+stays in the existing `Ecosystem` field. Per spec: no Rust sidecar
+parity for PyPI / Maven (Wasm scope, v0.5.0+).
+
+### Documentation
+
+- **README v0.2.1 refresh** (PR #49) — three-segment audience
+  framing preserved (solo / mid-size team / platform team), 5
+  ecosystems documented in a single Features table, factual
+  comparison vs Snyk / Socket, performance section linking to the
+  honest baseline doc, configuration env-var table, architecture
+  diagram refresh, ADR count updated 9 → 11, pre-1.0 status callout.
+- ADR count: 9 → 11 (0010 SECURITY threat model, 0011 v0.2.0 scope
+  + amendments, 0012 auth boundary at engine, 0013 publisher
+  Snapshot vs Profile split, 0014 anomaly → IoC bridge).
+
+### Dependency hygiene
+
+Merged:
+
+- `BurntSushi/toml` 1.3.2 → 1.6.0 (#50, minor)
+- `dtolnay/rust-toolchain` SHA refresh (#52)
+- Go workspace 1.25.0 → 1.25.7 + `goose/v3` 3.27.0 → 3.27.1 (#59,
+  manual replacement of #54 — dependabot can't bump `go.work`
+  directives)
+
+Deferred to v0.2.2:
+
+- 5 GitHub Action major bumps (`cosign-installer` 3 → 4,
+  `docker/login-action` 3 → 4, `actions/checkout` 4 → 6,
+  `goreleaser-action` 6 → 7, `dtolnay/rust-toolchain` toml 0.x → 1.x)
+  — release.yml core surface, requires release engineering session.
+- `kin-openapi` 0.135 → 0.137 (#55) — codegen-only transitive,
+  zero functional value, would add new transitive supply-chain
+  dep; revisit when oapi-codegen requires it.
+
+### Known issues
+
+- **Backstage transitive security alerts:** `uuid <14.0.0`
+  (GHSA-w5hq-g745-h8pq) and `fast-xml-parser <5.7.0`
+  (GHSA-gh4j-gqv2-49f6) appear in `yarn.lock` via transitive
+  Backstage dependencies. Both vulnerable + safe versions present;
+  pinned by downstream consumers. Resolution requires
+  `package.json` resolutions block + Backstage e2e validation
+  (the MUI 9 / Recharts breakage pattern); deferred to v0.2.2.
+- **TestPostgresContract flake:** Postgres testcontainers
+  shared-DB counter race produces intermittent
+  `database "rampart_contract_<pid>_N" does not exist` failures
+  on CI. Re-run passes deterministically. Fix (per-test DB
+  isolation) tracked for v0.2.2.
+
+### Migration
+
+No breaking changes from v0.2.0. New ecosystems (PyPI, Maven) are
+additive; existing npm / gomod / cargo flows unchanged.
+
+If you bump rampart from v0.2.0 → v0.2.1:
+
+- `go.work` and `go.mod` workspaces require Go 1.25.7+ if you
+  build from source.
+- No database migrations required (existing migrations 0001-0007
+  apply unchanged; v0.2.1 adds zero new migrations).
+- No API contract changes (`schemas/openapi.yaml` unchanged).
+- No configuration changes (existing `RAMPART_*` env vars work
+  as-is).
+
 ## [0.2.0] — 2026-04-27
 
 Major feature release. Six themes ship together: production-grade
@@ -323,5 +461,6 @@ Documented in `SECURITY.md`:
 
 None — this is the first release.
 
+[0.2.1]: https://github.com/ugurcan-aytar/rampart/releases/tag/v0.2.1
 [0.2.0]: https://github.com/ugurcan-aytar/rampart/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ugurcan-aytar/rampart/releases/tag/v0.1.0
