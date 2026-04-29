@@ -14,7 +14,7 @@ from v0.2.0's release notes (PyPI + Maven parsers, blast-radius
 performance fix), with honest measured deltas against the v0.2.0
 load test baseline.
 
-### Performance — Theme F perf fix
+### Performance — matcher + storage hot-path
 
 The v0.2.0 baseline missed two of three performance targets (total
 ingest 518s vs 300s target; blast-radius p95 2977ms vs 500ms target).
@@ -91,9 +91,9 @@ parity for PyPI / Maven (Wasm scope, v0.5.0+).
   comparison vs Snyk / Socket, performance section linking to the
   honest baseline doc, configuration env-var table, architecture
   diagram refresh, ADR count updated 9 → 11, pre-1.0 status callout.
-- ADR count: 9 → 11 (0010 SECURITY threat model, 0011 v0.2.0 scope
-  + amendments, 0012 auth boundary at engine, 0013 publisher
-  Snapshot vs Profile split, 0014 anomaly → IoC bridge).
+- ADR count: 9 → 11 (0010 golangci-lint v2 migration, 0011 v0.2.0
+  scope commitment + amendments, 0012 auth boundary at engine, 0013
+  publisher Snapshot vs Profile split, 0014 anomaly → IoC bridge).
 
 ### Dependency hygiene
 
