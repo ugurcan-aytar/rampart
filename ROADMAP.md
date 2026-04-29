@@ -27,41 +27,57 @@ against it before entering any release scope.
 
 ---
 
-## Current state (v0.1.0 shipped)
+## Current state (v0.2.1 shipped)
 
-v0.1.0 landed on 2026-04-21. What's running today:
+- **Last release**: v0.2.1 (2026-04-28). Performance fix +
+  multi-ecosystem (PyPI + Maven parsers). Closes the deferred
+  items from v0.2.0's release notes; all v0.2.0 release-gate
+  perf targets now passing with margin (total ingest 86 s,
+  blast-radius p95 2.49 ms, incident-detail p95 2.61 ms).
+  See [`CHANGELOG.md`](./CHANGELOG.md) `[0.2.1]` for the full
+  delta.
+- **Current focus**: v0.2.2 — release engineering polish +
+  dependency hygiene (no new features). See [ADR-0015](./docs/decisions/0015-v0.2.2-scope-commitment.md)
+  for scope rationale; v0.2.2 themes detailed below.
+- **Next major**: v0.3.0 — multi-repo aggregation + extended
+  IoC kinds + LLM augmentation foundations. Themes G–J below.
 
-- **Three quickstart paths**, one per user segment, each tested green
-  on a fresh checkout: `rampart scan` CLI (solo developer),
-  `docker compose up -d engine mock-npm-registry slack-notifier`
-  (mid-size team), `make demo-axios` (platform team) with a five-service
-  Backstage stack.
-- **Engine** (Go) implementing the six domain entities (Component, SBOM,
-  PackageVersion, IoC, Incident, Remediation), the incident state
-  machine, forward + retroactive matching, an in-process event bus with
-  five event types fanned out over SSE on `/v1/stream`, and a
-  blast-radius query on `/v1/blast-radius`.
-- **Rust sidecar** (rampart-native), opt-in via
-  `docker compose --profile native`. Isolation feature, not a throughput
-  win at Phase 1 (see ADR-0005).
-- **Three Backstage plugins** — `@ugurcan-aytar/backstage-plugin-rampart`
-  (frontend), `-backend` (engine proxy + CatalogSync), and
-  `-scaffolder-rampart-actions` (scaffolder actions). Ship pre-built
-  inside the `rampart-backstage` container image (not yet on npm — see
-  v0.1.1).
-- **Release artefacts on ghcr.io + GitHub Releases**:
-  five multi-arch container images (engine, rampart-native,
-  rampart-slack-notifier, rampart-mock-npm-registry, rampart-backstage),
-  twenty Go archive bundles via goreleaser (4 tools × linux/darwin +
-  windows where applicable), four cargo cross-compile Rust targets,
-  all cosign-signed via GitHub OIDC (keyless, no long-lived signing
-  keys in the repo) with syft-generated SPDX SBOMs attached as cosign
-  attestations.
-- **Ten CI/CD workflows** — see ADR-0009 for the gating-vs-advisory
-  split and the per-package coverage gates.
-- **Zero open Dependabot alerts** as of 2026-04-22 (35 → 0 via PR #7,
-  #20, #29 bumps + six `tolerable_risk` dismissals for upstream-pinned
-  transitives — see individual alert comments).
+What's running today (v0.2.1 surface):
+
+- **Three quickstart paths**, one per user segment, each tested
+  green on a fresh checkout: `rampart scan` CLI (solo
+  developer, 8 lockfile dialects), `docker compose up -d
+  postgres engine mock-npm-registry slack-notifier` (mid-size
+  team, postgres-default), `make demo-axios` (platform team)
+  with a six-service Backstage stack.
+- **Engine** (Go, postgres-backed) — five ecosystems (npm,
+  gomod, cargo, pypi, maven), seven domain entities (the
+  v0.1.0 six plus Publisher / PublisherSnapshot / Anomaly), the
+  incident state machine, hybrid blast-radius
+  (cached `incidents` JOIN + live matcher fallback), in-process
+  SSE event bus, JWT auth middleware (default off), env-allow-list
+  CORS, OpenAPI-driven gen-checked HTTP surface.
+- **Rust sidecar** (rampart-native), opt-in. Isolation feature,
+  not a throughput win at Phase 1 (see ADR-0005).
+- **Three Backstage plugins** — frontend, backend proxy +
+  `CatalogSync`, scaffolder actions. Ship pre-built inside the
+  `rampart-backstage` container image. Frontend includes the
+  v0.2.0 `IncidentDetail` drawer + blast-radius graph
+  (`reactflow` + `dagre`) + filter toolbar with URL state.
+- **Release artefacts on ghcr.io + GitHub Releases** — five
+  multi-arch container images (`engine`, `rampart-native`,
+  `rampart-slack-notifier`, `rampart-mock-npm-registry`,
+  `rampart-backstage`); 68 release-page assets per tag (Go
+  archives × 5 platform tuples × 4 binaries; rampart-native
+  4 cargo cross-compile targets; SBOMs; cosign signatures);
+  GitHub Release body auto-extracted from `CHANGELOG.md`
+  (verified end-to-end on the v0.2.1 cut).
+- **CI/CD** — engine, native, parity, gen-check, backstage,
+  integrations, codeql, e2e + dependency-review + release.
+  See ADR-0009 for the gating-vs-advisory split.
+- **Two open Dependabot alerts as of 2026-04-29** (Backstage
+  transitive: `uuid` < 14, `fast-xml-parser` < 5.7). Closure
+  scoped to v0.2.2 dependency hygiene work (see below).
 
 ---
 
@@ -460,6 +476,81 @@ score (high / medium / low) and a human-readable explanation.
   ingested, blast-radius p95 < 500 ms.
 - Security posture documented: updated `SECURITY.md` reflects the
   new auth + CORS + Postgres surface.
+
+---
+
+## v0.2.2 — release engineering polish + dependency hygiene (target: 1–2 weeks)
+
+Maintenance release. **No new features.** Pure cleanup of items
+the v0.2.0 / v0.2.1 cycle accumulated. See
+[ADR-0015](./docs/decisions/0015-v0.2.2-scope-commitment.md)
+for full scope rationale. Follows the v0.1.1 precedent for
+maintenance releases — descriptive subsection headings, no
+feature-release Theme letters.
+
+### CI/test reliability
+
+- [ ] `TestPostgresContract` per-test database pattern. Replace
+  shared-container `freshDSN()` counter with one testcontainer
+  per `t.Run`, eliminating the `database "rampart_contract_<pid>_N"
+  does not exist` race observed on PR #47 + #59 CI runs.
+- **Acceptance**: 50 consecutive
+  `go test ./engine/internal/storage/postgres/... -count=10`
+  green locally; zero CI re-runs across the next three release
+  cycles.
+
+### Release pipeline normalization
+
+- [ ] Image tag normalization. `docker/metadata-action` in
+  `release.yml` currently emits `:0.2.1` (semver-stripped via
+  `pattern={{version}}`). Add a `:v0.2.2` tag per semver
+  convention; keep the unprefixed tag for one cycle (deprecate
+  in v0.3.0).
+- [ ] Engine ghcr path normalization. The `engine` image
+  publishes to `ghcr.io/ugurcan-aytar/engine`, breaking the
+  `rampart-*` prefix the other four images use. Dual-publish to
+  `ghcr.io/ugurcan-aytar/rampart-engine` for one cycle;
+  deprecate the unprefixed path in v0.3.0.
+- [ ] Cargo fixture rename. Move
+  `engine/testdata/lockfiles/cargo/{simple,medium}.toml` to
+  `cargo/{simple,medium}/Cargo.lock` so auto-detect fires
+  without `--ecosystem cargo`.
+
+### Dependency hygiene
+
+- 5 GitHub Action major bumps (sequential PRs with snapshot
+  validation; non-bundlable to preserve revertability):
+  - [ ] `sigstore/cosign-installer` 3.9.1 → 4.1.1 (revisit
+    `SECURITY.md` cosign-recipe if v4 client diverges).
+  - [ ] `docker/login-action` 3.7.0 → 4.1.0.
+  - [ ] `actions/checkout` 4.3.1 → 6.0.2 (skipping v5; touches
+    every workflow).
+  - [ ] `goreleaser/goreleaser-action` 6.4.0 → 7.2.1 (highest-
+    risk because the v0.2.1 CHANGELOG override step lives in
+    the same job — snapshot dry-run on the PR branch is
+    mandatory).
+  - [ ] `toml` 0.8.23 → 1.1.2+spec-1.1.0 in `/native` (Rust
+    crate, 0.x → 1.x API stability transition; cargo build +
+    parity-test green required).
+- [ ] Backstage transitive security alerts. Add `resolutions`
+  block to `package.json` forcing `uuid: ^14`, `fast-xml-parser:
+  ^5.7`. Validate via SPA mount + Playwright e2e per the MUI 9
+  / Recharts breakage lesson — typecheck + lint + jest can pass
+  while production webpack mount dies.
+
+### Documentation polish
+
+- [ ] README "fifty times a day" phrase neutralization
+  (single-line edit, no structural changes).
+
+### v0.2.2 release gate
+
+- Every checklist item across the four subsections green.
+- Open Dependabot alerts: 2 → 0.
+- `TestPostgresContract` flake CI signal: zero re-runs across
+  the v0.2.2 release-merge sequence.
+- Goreleaser snapshot dry-run green on each GH Action major-bump
+  PR before merge — no bundling.
 
 ---
 
