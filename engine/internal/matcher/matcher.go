@@ -1,16 +1,16 @@
 // Package matcher walks an SBOM's package list against an IoC and returns
 // the packages that match the IoC's kind-specific predicate. Stateless
 // and pure — the engine wraps the result in domain events (see
-// engine/internal/api.openIncidentFromMatch). Phase 1 covers two of the
-// three IoC kinds:
+// engine/internal/api.openIncidentFromMatch). Three IoC kinds:
 //
 //   - packageVersion: exact (ecosystem, name, version) match.
 //   - packageRange: exact (ecosystem, name), semver constraint per
 //     Masterminds/semver/v3 — the library the OpenAPI schema names.
-//   - publisherAnomaly: intentional no-op today. Requires the publisher
-//     graph (maintainer email, OIDC regression, version jump) which
-//     lands in Phase 2; IoCs of this kind parse and persist but never
-//     match, logged at Debug.
+//   - publisherAnomaly: covered via the IoCBodyAnomaly variant
+//     (package-keyed, ADR-0014). The legacy maintainer-keyed
+//     PublisherAnomaly slot stays a no-op — no shipping detector
+//     produces it; IoCs that arrive in that slot parse and persist
+//     but never match, logged at Debug.
 //
 // Why "matches a single IoC against a single SBOM" and not "matches all
 // IoCs × all SBOMs": the engine's two call sites are

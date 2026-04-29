@@ -30,9 +30,16 @@ func TestDispatch_Missing(t *testing.T) {
 	require.Contains(t, err.Error(), "missing subcommand")
 }
 
-func TestDispatch_IngestIsStub(t *testing.T) {
-	var out, errOut bytes.Buffer
-	err := commands.Dispatch(context.Background(), []string{"ingest"}, &out, &errOut)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not yet implemented")
+func TestDispatch_RemovedStubsReturnUnknown(t *testing.T) {
+	// ingest / status / serve were stub commands until the v0.2.x park-prep
+	// cleanup removed them. They now hit the default branch and surface as
+	// 'unknown subcommand', same as any unrecognised input. Pinning this
+	// behaviour so a future re-introduction of any name is a deliberate
+	// choice, not a regression.
+	for _, name := range []string{"ingest", "status", "serve"} {
+		var out, errOut bytes.Buffer
+		err := commands.Dispatch(context.Background(), []string{name}, &out, &errOut)
+		require.Error(t, err, "dispatch on removed stub %q must error", name)
+		require.Contains(t, err.Error(), "unknown subcommand", "dispatch on %q", name)
+	}
 }

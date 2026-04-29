@@ -5,10 +5,9 @@
 // Run with: go run ./cmd/sse-demo (from engine/).
 //
 // It's the "terminal 1 + terminal 2 + terminal 3" demo from the SSE design
-// review, folded into a single process so it's reproducible without a
-// publishing HTTP endpoint (those land in Phase 1 continuation). The wire
-// format is identical to what curl -N http://localhost:8080/v1/stream
-// would see once a real publishing endpoint is wired.
+// review, folded into a single process for self-contained reproduction.
+// The wire format is identical to what `curl -N http://localhost:8080/v1/stream`
+// observes against the live engine.
 package main
 
 import (
