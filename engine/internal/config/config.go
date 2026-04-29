@@ -1,5 +1,6 @@
-// Package config holds engine runtime settings. Phase 1 exposes sensible
-// defaults; env / flag / YAML loading lands in Adım 4 alongside the CLI.
+// Package config holds engine runtime settings. Default returns
+// sensible baseline values; FromEnv layers environment-variable
+// overrides on top.
 package config
 
 import (
@@ -149,7 +150,7 @@ type Config struct {
 	AnomalyBatchSize int
 }
 
-// Default returns the Phase 1 defaults.
+// Default returns the baseline configuration.
 func Default() *Config {
 	return &Config{
 		HTTPAddr:                 ":8080",
@@ -173,7 +174,7 @@ func Default() *Config {
 	}
 }
 
-// FromEnv returns the Phase 1 defaults with the environment-variable
+// FromEnv returns the baseline configuration with environment-variable
 // overrides applied. Today it covers parser strategy and the native
 // socket path — both are how `docker compose --profile native up`
 // flips the engine into sidecar mode without rebuilding the image.

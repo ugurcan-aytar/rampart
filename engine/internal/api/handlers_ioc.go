@@ -61,8 +61,9 @@ func (s *Server) SubmitIoC(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toGenIoC(ioc))
 }
 
-// ListIoCs returns all IoCs sorted by PublishedAt. Phase 1 doesn't page;
-// the Cursor / Limit params are accepted but ignored.
+// ListIoCs returns all IoCs sorted by PublishedAt. Pagination is
+// deferred (no specific theme yet); the Cursor / Limit params are
+// accepted but ignored.
 func (s *Server) ListIoCs(w http.ResponseWriter, r *http.Request, params gen.ListIoCsParams) {
 	iocs, err := s.storage.ListIoCs(r.Context())
 	if err != nil {
@@ -114,8 +115,11 @@ func fromGenIoC(g gen.IoC) domain.IoC {
 		}
 	}
 	if g.PublisherAnomaly != nil {
-		// Phase 1 intentionally drops Signals — the publisher graph
-		// isn't built yet; see matcher.evaluatePublisherAnomaly.
+		// PublisherAnomaly IoCKind is intentionally a no-op slot in
+		// forwardMatch dispatch. Per ADR-0014, anomaly-derived IoCs
+		// surface via the IoCBodyAnomaly variant of IoCBody, not as
+		// a separate kind. The slot remains for backwards compatibility
+		// and potential future use.
 		i.PublisherAnomaly = &domain.IoCPublisherAnomaly{
 			PublisherName: g.PublisherAnomaly.PublisherName,
 		}

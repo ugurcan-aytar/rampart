@@ -135,10 +135,11 @@ func (s *Server) Stream(w http.ResponseWriter, r *http.Request, params gen.Strea
 		return
 	}
 
-	// Phase 1 is hot-only: we log the Last-Event-ID so we can grep the
-	// signal to size Phase 2's replay buffer when it lands.
+	// SSE is hot-delivery only today: we log the Last-Event-ID so we
+	// can grep the signal and size a future replay buffer if one is
+	// scoped (no specific theme yet).
 	if params.LastEventID != nil && *params.LastEventID != "" {
-		s.log.Info("sse: client requested replay but only hot-delivery is supported in Phase 1",
+		s.log.Info("sse: client requested replay but only hot-delivery is supported",
 			"last_event_id", *params.LastEventID)
 	}
 

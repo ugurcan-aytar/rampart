@@ -4,9 +4,11 @@
 // response path (ParsedSBOM). See ADR-0005 Measured Consequences for
 // why the split is asymmetric.
 //
-// Scope (Phase 1):
-//   - One connection per Parse call. Phase 2 adds pooling once we've
-//     measured reconnect cost against steady-state SBOM ingest.
+// Scope:
+//   - One connection per Parse call. Connection pooling is deferred —
+//     see ROADMAP Theme N (rampart-native sidecar evaluation,
+//     v0.5.0+); the trigger is measuring reconnect cost against
+//     steady-state SBOM ingest.
 //   - Synchronous request → response. No pipelining; each call blocks
 //     until the native side answers or the deadline fires.
 //   - Request-scoped timeouts via context.Context; no client-level
@@ -97,7 +99,7 @@ func (c *Client) ParseNPMLockfile(ctx context.Context, content []byte) (*domain.
 	// Request body layout:
 	//   1 byte opcode
 	// + 4-byte BE content_length + content bytes
-	// + 4-byte BE metadata_length (0 in Phase 1) + 0 metadata bytes
+	// + 4-byte BE metadata_length (reserved, currently 0) + 0 metadata bytes
 	bodyLen := 1 + 4 + len(content) + 4
 	if bodyLen > MaxFrameBytes {
 		return nil, fmt.Errorf("request body %d exceeds MaxFrameBytes %d", bodyLen, MaxFrameBytes)

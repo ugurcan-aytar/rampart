@@ -8,10 +8,12 @@ import (
 // SARIF renders an SBOM as a SARIF 2.1.0 document suitable for
 // github/codeql-action/upload-sarif.
 //
-// Scope (Phase 1): the tool block is populated (driver name / version /
-// URI), but the results array is empty until IoC matching comes online.
-// Package-count and ecosystem land in the run's `properties` block so a
-// SARIF viewer shows something meaningful today.
+// Scope: the tool block is populated (driver name / version /
+// URI). The results array is empty when the CLI emits a pure
+// ParsedSBOM (no incident matching) — `rampart scan` is a
+// parse-only flow; SARIF results would need an engine round-trip
+// to populate. Package-count and ecosystem land in the run's
+// `properties` block so a SARIF viewer shows something meaningful.
 type SARIF struct{}
 
 func (SARIF) Write(w io.Writer, sbom *SBOM) error {

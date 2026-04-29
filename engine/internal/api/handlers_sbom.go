@@ -35,12 +35,13 @@ func (s *Server) SubmitSBOM(w http.ResponseWriter, r *http.Request, componentRef
 	}
 	if body.Ecosystem != "npm" {
 		writeError(w, http.StatusBadRequest, "UNSUPPORTED_ECOSYSTEM",
-			"Phase 1 only ingests npm lockfiles; got "+body.Ecosystem)
+			"HTTP submission currently supports npm lockfiles only; got "+body.Ecosystem+
+				" (the rampart CLI scan command supports npm, gomod, cargo, pypi, maven)")
 		return
 	}
 	if body.SourceFormat != gen.SBOMSubmissionSourceFormatNpmPackageLockV3 {
 		writeError(w, http.StatusBadRequest, "UNSUPPORTED_SOURCE_FORMAT",
-			"Phase 1 only ingests npm-package-lock-v3")
+			"HTTP submission currently supports npm-package-lock-v3 only")
 		return
 	}
 

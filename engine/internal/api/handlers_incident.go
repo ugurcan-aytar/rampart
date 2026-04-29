@@ -14,8 +14,9 @@ import (
 // ListIncidents returns incidents filtered by state / ecosystem / since.
 // Sorted by OpenedAt desc (newest first — the Backstage IncidentDashboard
 // reads the list top-down and operators look at the most recent first).
-// Cursor pagination is Phase 2; the params are accepted and ignored so
-// clients that already send them don't break.
+// Cursor pagination is deferred (no specific theme yet); the params
+// are accepted and ignored so clients that already send them don't
+// break.
 func (s *Server) ListIncidents(w http.ResponseWriter, r *http.Request, params gen.ListIncidentsParams) {
 	filter := domain.IncidentFilter{}
 	if params.State != nil {
@@ -69,10 +70,10 @@ func (s *Server) ListIncidents(w http.ResponseWriter, r *http.Request, params ge
 
 // GetIncident returns a single incident. Snapshot + remediations come
 // back as-is; the linked IoC is not hydrated today — clients who need
-// IoC detail hit /v1/iocs?… themselves. That's a deliberate Phase 1
-// trade-off (keeps the handler stateless; no N+1 joins in memory
-// storage). Phase 2 denormalises if the UI proves the join is a hot
-// path.
+// IoC detail hit /v1/iocs?… themselves. That's a deliberate trade-off
+// (keeps the handler stateless; no N+1 joins in memory storage).
+// A future denormalised view could move the join into the response
+// if the UI proves it's a hot path; not currently scoped.
 func (s *Server) GetIncident(w http.ResponseWriter, r *http.Request, id string) {
 	inc, err := s.storage.GetIncident(r.Context(), id)
 	if err != nil {

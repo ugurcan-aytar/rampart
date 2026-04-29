@@ -1,6 +1,8 @@
 // Package events houses the process-local event bus that fans domain
 // events out to in-process subscribers. Today the only consumer is the
-// /v1/stream SSE handler; Phase 2 adds a broker publisher beside it.
+// /v1/stream SSE handler; a future distributed-broker variant could
+// publish beside it (no specific theme yet — process-local fan-out
+// is sufficient for the single-node deployment shape).
 //
 // Design notes:
 //   - Each Subscribe returns a fresh bounded channel + a cancel fn.
@@ -43,9 +45,10 @@ func NewBus(bufferSize int) *Bus {
 // Cancel closes the channel and removes the subscription.
 // When ctx is Done, the Bus auto-cancels this subscription.
 //
-// No error return: Phase 1 is process-local and cannot fail. When a
-// distributed broker lands in Phase 2, a new Subscribe variant carries
-// the error signal; existing callers keep working.
+// No error return: the current implementation is process-local and
+// cannot fail. If a distributed broker variant ever lands, a new
+// Subscribe shape will carry the error signal; existing callers keep
+// working.
 func (b *Bus) Subscribe(ctx context.Context) (<-chan domain.DomainEvent, func()) {
 	b.mu.Lock()
 	id := b.nextID

@@ -1,9 +1,10 @@
 // Package trust houses the publisher-trust engine.
 //
-// Phase 1 (this sprint): the domain types, the Engine interface, and a default
-// AlwaysTrust implementation that reports no signals. Phase 3 swaps in a
-// statistical baseline wired from multiple Detector implementations — the
-// interface in signals.go is the hook.
+// Initial implementation: domain types, the Engine interface, and a
+// default AlwaysTrust implementation that reports no signals. A
+// statistical baseline wired from multiple Detector implementations
+// can swap in via the interface in signals.go when scoped (no
+// specific theme yet).
 package trust
 
 import (
