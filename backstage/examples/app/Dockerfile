@@ -23,7 +23,7 @@
 # BUILD — yarn install (dev + prod), tsc, frontend SPA bundle, backend
 # skeleton + bundle tarballs.
 # ---------------------------------------------------------------------------
-FROM node:20-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 g++ make \
@@ -68,7 +68,7 @@ RUN yarn workspace backend build
 # Rebuild better-sqlite3 in the same stage so the build toolchain stays
 # out of the runtime image.
 # ---------------------------------------------------------------------------
-FROM node:20-bookworm-slim AS prune
+FROM node:26-bookworm-slim AS prune
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 g++ make \
@@ -105,7 +105,7 @@ RUN npm rebuild better-sqlite3 --verbose 2>&1 | tail -3
 # ---------------------------------------------------------------------------
 # RUNTIME — thin image, pruned tree already node-owned, no build tools.
 # ---------------------------------------------------------------------------
-FROM node:20-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates \
