@@ -31,8 +31,8 @@
     "@backstage/theme": "^0.7.3",
     "@emotion/react": "^11.13.0",
     "@emotion/styled": "^11.13.0",
-    "@mui/icons-material": "^9.0.0",
-    "@mui/material": "^9.0.0",
+    "@mui/icons-material": "^9.0.1",
+    "@mui/material": "^9.0.1",
     "dagre": "0.8.5",
     "reactflow": "11.11.4",
     "recharts": "^2.15.0"
